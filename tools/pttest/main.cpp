@@ -459,7 +459,12 @@ struct Instance
 	}
 };
 
-Image render( Instance& i, const Target& t, GLuint input, int inputW, int inputH, double seconds )
+/// One frame through the plugin, leaving the result on the target. No readback:
+/// `glReadPixels` is a synchronous stall of the whole frame -- 33 MB of it at 4K
+/// -- and timing it as part of the render is how the first --bench run reported
+/// 4K as 20% slower than it is, with a 15% spread between runs that had nothing
+/// to do with the GPU.
+void renderOnly( Instance& i, const Target& t, GLuint input, int inputW, int inputH, double seconds )
 {
 	FFGLTextureStruct in = {};
 	in.Width = in.HardwareWidth = static_cast< FFUInt32 >( inputW );
@@ -491,6 +496,12 @@ Image render( Instance& i, const Target& t, GLuint input, int inputW, int inputH
 
 	i.plugin.SetTime( seconds );
 	i.plugin.ProcessOpenGL( &gl );
+}
+
+/// ...and the same frame, read back. Everything but --bench wants this.
+Image render( Instance& i, const Target& t, GLuint input, int inputW, int inputH, double seconds )
+{
+	renderOnly( i, t, input, inputW, inputH, seconds );
 	return readBack( t );
 }
 
@@ -1640,14 +1651,20 @@ int runBench( int frames )
 		i.set( Pilot::PT_PROGRESS, 0.6f );
 
 		// glFinish on both sides, or this times how fast the driver accepts
-		// commands rather than how fast the GPU runs them.
-		for( int f = 0; f < 20; ++f )
-			render( i, target, input, size.first, size.second, f / 60.0 );
+		// commands rather than how fast the GPU runs them. renderOnly and not
+		// render: a readback per frame is a synchronous stall and has nothing
+		// to do with what the plugin costs a host.
+		// Sixty frames of warm-up, not twenty: the first run at each size pays
+		// for shader specialisation and the first allocation of the two pass
+		// buffers, and twenty was not enough to get that out of the timing at
+		// 720p, where the whole frame is a tenth of a millisecond.
+		for( int f = 0; f < 60; ++f )
+			renderOnly( i, target, input, size.first, size.second, f / 60.0 );
 		glFinish();
 
 		const auto start = std::chrono::steady_clock::now();
 		for( int f = 0; f < frames; ++f )
-			render( i, target, input, size.first, size.second, ( 20 + f ) / 60.0 );
+			renderOnly( i, target, input, size.first, size.second, ( 60 + f ) / 60.0 );
 		glFinish();
 		const double ms = std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now() - start ).count() / frames;
 
@@ -1700,7 +1717,7 @@ int main( int argc, char** argv )
 	std::string outputPath = "/tmp/pilot.png";
 	int width = 1920, height = 1080;
 	int frames = 5;
-	int benchFrames = 120;
+	int benchFrames = 240;
 	float flatLevel = -1.0f;
 	bool quads = false;
 	std::vector< std::pair< std::string, float > > overrides;
