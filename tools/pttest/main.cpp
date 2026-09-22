@@ -1598,6 +1598,35 @@ int pixelsAt( int w, int h )
 		Check( litSeen > 0, "  ...and does change something inside it (" + std::to_string( litSeen ) + " probes)" );
 	}
 
+	//-------------------------------------------------------------------
+	// Mix 0 is a bypass, not an almost-bypass.
+	//
+	// `mix( clip, col, 0.0 )` is `clip * 1 + col * 0`, which is exact in GLSL --
+	// so two renders at Mix 0 with wildly different settings either side must
+	// be byte-identical, and an operator who winds Mix down gets their clip
+	// back rather than something a rounding away from it.
+	//-------------------------------------------------------------------
+	{
+		Image a, b;
+		{
+			Instance i( w, h );
+			i.set( Pilot::PT_MIX, 0.0f );
+			i.set( Pilot::PT_PROGRESS, 0.2f );
+			i.set( Pilot::PT_TYPE, 0.0f );
+			a = render( i, target, input, w, h, 0.0 );
+		}
+		{
+			Instance i( w, h );
+			i.set( Pilot::PT_MIX, 0.0f );
+			i.set( Pilot::PT_PROGRESS, 0.9f );
+			i.set( Pilot::PT_TYPE, 3.0f );
+			i.set( Pilot::PT_BORDER_WIDTH, 1.0f );
+			i.set( Pilot::PT_ERROR_RATE, 0.5f );
+			b = render( i, target, input, w, h, 0.0 );
+		}
+		Check( a.px == b.px, "  Mix 0 is a byte-exact bypass, whatever else is set" );
+	}
+
 	glDeleteTextures( 1, &input );
 	target.Destroy();
 	return g_failures;

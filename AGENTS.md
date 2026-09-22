@@ -289,7 +289,8 @@ missing float-ambiguity window, the sweep's impossible floor for `Message On`, a
 | 49 | `sweep.py` Message On | ...except this one, at 0.1% | 0.1% | 150×7 of 256×192 is 2.1% of the screen and 1.5% of the frame; about a third of the box differs from what was underneath. A third of the 0.34% it actually moves, a hundred times a dead control | **yes** | mildly |
 | 50 | `sweep.py` per-pixel | a channel differs by more than 2 counts | 2 of 255 | an 8-bit quantisation guard, inherited from the fleet's sweeps | **yes** | no |
 | 51 | `verify.sh` shaders | exactly 4 shaders extracted, all compile | none | the count is asserted, not counted up to — a check that silently looks at nothing is worse than no check | no | no |
-| 52 | `--bench` | ms/frame at three sizes | **not pass/fail** | there is no threshold worth asserting on somebody else's GPU. It is recorded so "it feels slower" becomes a comparison. `glFinish` on both sides and no readback; three runs of 300 frames agree to 0.005 ms | **yes** | yes, by construction |
+| 52 | `--pixels` Mix 0 | two renders at Mix 0 with everything else different | **none** — byte-identical | `mix( clip, col, 0 )` is `clip*1 + col*0`, exact in GLSL. An operator who winds Mix down gets their clip back, not something a rounding away from it | **yes** | **yes — two rasters** |
+| 53 | `--bench` | ms/frame at three sizes | **not pass/fail** | there is no threshold worth asserting on somebody else's GPU. It is recorded so "it feels slower" becomes a comparison. `glFinish` on both sides and no readback; three runs of 300 frames agree to 0.005 ms | **yes** | yes, by construction |
 
 Two things the table does not contain, and the absence is deliberate:
 
@@ -321,7 +322,8 @@ Two things the table does not contain, and the absence is deliberate:
   standard errors of the geometric distribution's own mean every time.
 - **Every one of the 10 model checks fails when the model is broken** — ten
   deliberate perturbations, ten detections.
-- **All 14 controls move the picture** (`tools/sweep.py`).
+- **All 14 controls move the picture** (`tools/sweep.py`), and **Mix 0 is a
+  byte-exact bypass** at both rasters whatever else is set.
 - **The build is universal and exports `plugMain`** — `lipo` reports
   `x86_64 arm64`, `nm -gU` finds `_plugMain`, and `oxbow probe` reports the name
   `SW Pilot`, the id `PT01` and an effect with 18 parameters in four groups.
