@@ -31,6 +31,14 @@
 		pttest --out /tmp/pilot.png --size 1920x1080 --set "Progress=0.6"
 		pttest --agree --order --thirds --attributes --border --error
 		pttest --reveal --pixels --bench
+
+	`--pipe` takes the fleet's frame format, so one filming script can drive
+	any of the FFGL plugins. It is a renderer, not a check: it asserts nothing
+	and touches no other mode.
+
+		ffmpeg -i in.mov -f rawvideo -pix_fmt rgba - \
+		  | pttest --pipe --size 1920x1080 --fps 30 [--script cues.txt] \
+		  | ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -i - out.mov
 */
 
 #include "Pilot.h"
@@ -51,9 +59,14 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <functional>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 using namespace pilot;
 
@@ -1709,6 +1722,234 @@ int runBench( int frames )
 }
 
 //---------------------------------------------------------------------------
+// --pipe cue sheet: one 'frame Parameter Name value' per line, '#' comments.
+// Same format as the rest of the fleet (rosette's rztest), so one filming
+// script drives any of them. Keys interpolate linearly; before a track's first
+// key it holds that key's value, after its last it holds the last.
+//---------------------------------------------------------------------------
+using Track = std::vector< std::pair< int, float > >;
+
+std::map< std::string, Track > loadScript( const std::string& path, std::string& error )
+{
+	std::map< std::string, Track > tracks;
+	std::ifstream file( path );
+	if( !file )
+	{
+		error = "cannot open " + path;
+		return tracks;
+	}
+
+	std::string line;
+	int lineNumber = 0;
+	while( std::getline( file, line ) )
+	{
+		++lineNumber;
+		const size_t hash = line.find( '#' );
+		if( hash != std::string::npos )
+			line.erase( hash );
+		std::istringstream in( line );
+
+		int frame = 0;
+		if( !( in >> frame ) )
+			continue;
+
+		std::vector< std::string > words;
+		std::string word;
+		while( in >> word )
+			words.push_back( word );
+		if( words.size() < 2 )
+		{
+			error = path + ":" + std::to_string( lineNumber ) + ": expected `frame Parameter Name value`";
+			return {};
+		}
+
+		const float value = std::strtof( words.back().c_str(), nullptr );
+		words.pop_back();
+		std::string name = words.front();
+		for( size_t i = 1; i < words.size(); ++i )
+			name += " " + words[ i ];
+
+		tracks[ name ].emplace_back( frame, value );
+	}
+
+	for( auto& entry : tracks )
+		std::sort( entry.second.begin(), entry.second.end() );
+	return tracks;
+}
+
+float valueAt( const Track& track, int frame )
+{
+	if( track.empty() )
+		return 0.0f;
+	if( frame <= track.front().first )
+		return track.front().second;
+	if( frame >= track.back().first )
+		return track.back().second;
+
+	for( size_t i = 1; i < track.size(); ++i )
+	{
+		if( frame <= track[ i ].first )
+		{
+			const auto& a    = track[ i - 1 ];
+			const auto& b    = track[ i ];
+			const float span = static_cast< float >( b.first - a.first );
+			const float t    = span > 0.0f ? ( static_cast< float >( frame - a.first ) / span ) : 1.0f;
+			return a.second + ( b.second - a.second ) * t;
+		}
+	}
+	return track.back().second;
+}
+
+int paramIndex( Pilot& plugin, const std::string& name )
+{
+	for( unsigned int p = 0; p < plugin.GetNumParams(); ++p )
+	{
+		const char* declared = plugin.GetParamName( p );
+		if( declared != nullptr && name == declared )
+			return static_cast< int >( p );
+	}
+	return -1;
+}
+
+//---------------------------------------------------------------------------
+/// --pipe: raw RGBA frames on stdin, the plugin's output on stdout.
+///
+/// Nothing but frames goes to stdout -- every message is on stderr -- or the
+/// encoder downstream would take a status line for pixels. The clock is the
+/// frame index over --fps, which is what Clip time sync and the border phase
+/// run on; the input is the same size as the output, as a layer in a
+/// composition of that size would be.
+//---------------------------------------------------------------------------
+int runPipe( int width, int height, double fps, const std::string& scriptPath,
+             const std::vector< std::pair< std::string, float > >& overrides )
+{
+	CGLContextObj context = createContext();
+	if( context == nullptr )
+	{
+		std::fprintf( stderr, "pttest: could not create an OpenGL 4.1 core context\n" );
+		return 1;
+	}
+
+	int result = 0;
+	{
+		Target target;
+		if( !target.Create( width, height ) )
+		{
+			std::fprintf( stderr, "pttest: output framebuffer is incomplete\n" );
+			return 1;
+		}
+		const size_t stride = static_cast< size_t >( width ) * 4;
+		std::vector< unsigned char > frame( stride * height );
+		std::vector< unsigned char > flipped( frame.size() );
+		const GLuint input = makeInput( frame, width, height );
+
+		Instance instance( width, height );
+		if( !instance.ok )
+			return 1;
+
+		for( const auto& o : overrides )
+		{
+			const int index = paramIndex( instance.plugin, o.first );
+			if( index < 0 )
+			{
+				std::fprintf( stderr, "pttest: no parameter named '%s' (try --list)\n", o.first.c_str() );
+				return 2;
+			}
+			instance.plugin.SetFloatParameter( static_cast< unsigned int >( index ), o.second );
+		}
+
+		//Resolve the script's names once, up front, and refuse a name that is
+		//not a parameter: a misspelled cue that silently did nothing would
+		//produce a take that looks deliberate and is wrong.
+		std::map< unsigned int, Track > automation;
+		if( !scriptPath.empty() )
+		{
+			std::string error;
+			const std::map< std::string, Track > tracks = loadScript( scriptPath, error );
+			if( !error.empty() )
+			{
+				std::fprintf( stderr, "pttest: %s\n", error.c_str() );
+				return 2;
+			}
+			for( const auto& entry : tracks )
+			{
+				const int index = paramIndex( instance.plugin, entry.first );
+				if( index < 0 )
+				{
+					std::fprintf( stderr, "pttest: script names '%s', which is not a parameter (try --list)\n", entry.first.c_str() );
+					return 2;
+				}
+				automation[ static_cast< unsigned int >( index ) ] = entry.second;
+			}
+		}
+
+		int index = 0;
+		for( ;; ++index )
+		{
+			size_t filled = 0;
+			while( filled < frame.size() )
+			{
+				const ssize_t got = read( STDIN_FILENO, frame.data() + filled, frame.size() - filled );
+				if( got <= 0 )
+					break;
+				filled += static_cast< size_t >( got );
+			}
+			if( filled < frame.size() )
+				break;
+
+			for( const auto& track : automation )
+				instance.plugin.SetFloatParameter( track.first, valueAt( track.second, index ) );
+
+			//A raw frame arrives top row first and GL wants bottom row first.
+			for( int y = 0; y < height; ++y )
+				std::memcpy( flipped.data() + static_cast< size_t >( height - 1 - y ) * stride,
+				             frame.data() + static_cast< size_t >( y ) * stride, stride );
+			glBindTexture( GL_TEXTURE_2D, input );
+			glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+			glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, flipped.data() );
+			glBindTexture( GL_TEXTURE_2D, 0 );
+
+			Image img = render( instance, target, input, width, height, index / fps );
+
+			//Premultiplied output is already the over-black composite, so
+			//flattening is forcing alpha opaque -- as the PNG path does.
+			for( size_t i = 3; i < img.px.size(); i += 4 )
+				img.px[ i ] = 255;
+
+			size_t written = 0;
+			while( written < img.px.size() )
+			{
+				const ssize_t put = write( STDOUT_FILENO, img.px.data() + written, img.px.size() - written );
+				if( put <= 0 )
+					break;
+				written += static_cast< size_t >( put );
+			}
+			if( written < img.px.size() )
+			{
+				std::fprintf( stderr, "pttest: stdout closed at frame %d\n", index );
+				result = 1;
+				break;
+			}
+		}
+
+		const GLenum error = glGetError();
+		if( error != GL_NO_ERROR )
+		{
+			std::fprintf( stderr, "pttest: GL error 0x%04x during --pipe\n", error );
+			result = 1;
+		}
+		std::fprintf( stderr, "pttest: piped %d frames (%dx%d at %g fps)\n", index, width, height, fps );
+
+		glDeleteTextures( 1, &input );
+		target.Destroy();
+	}
+
+	CGLSetCurrentContext( nullptr );
+	CGLDestroyContext( context );
+	return result;
+}
+
+//---------------------------------------------------------------------------
 void usage()
 {
 	std::printf(
@@ -1737,7 +1978,12 @@ void usage()
 		"  checks that render:\n"
 		"  --reveal          the rendered frame against the order table, two rasters\n"
 		"  --pixels          attributes, border and message, two rasters\n"
-		"  --bench           720p, 1080p and 4K\n" );
+		"  --bench           720p, 1080p and 4K\n"
+		"\n"
+		"  rendering for film, not a check:\n"
+		"  --pipe            raw RGBA frames on stdin, raw RGBA frames on stdout\n"
+		"  --script PATH     parameter cues for --pipe: 'frame Name value'\n"
+		"  --fps N           the clock --pipe runs on (default 60)\n" );
 }
 } // namespace
 
@@ -1751,6 +1997,9 @@ int main( int argc, char** argv )
 	bool quads = false;
 	std::vector< std::pair< std::string, float > > overrides;
 	std::vector< std::string > modes;
+	bool wantPipe = false;
+	std::string scriptPath;
+	double fps = 60.0;
 
 	for( int i = 1; i < argc; ++i )
 	{
@@ -1779,6 +2028,16 @@ int main( int argc, char** argv )
 			flatLevel = std::strtof( next().c_str(), nullptr );
 		else if( arg == "--quads" )
 			quads = true;
+		else if( arg == "--pipe" )
+			wantPipe = true;
+		else if( arg == "--script" )
+			scriptPath = next();
+		else if( arg == "--fps" )
+			fps = std::strtod( next().c_str(), nullptr );
+		else if( arg == "--width" )
+			width = std::atoi( next().c_str() );
+		else if( arg == "--height" )
+			height = std::atoi( next().c_str() );
 		else if( arg == "--set" )
 		{
 			const std::string assignment = next();
@@ -1810,6 +2069,21 @@ int main( int argc, char** argv )
 	{
 		std::fprintf( stderr, "pttest: width, height and frames must all be positive\n" );
 		return 2;
+	}
+
+	if( wantPipe )
+	{
+		if( !modes.empty() )
+		{
+			std::fprintf( stderr, "pttest: --pipe renders; it does not combine with a check\n" );
+			return 2;
+		}
+		if( !( fps > 0.0 ) )
+		{
+			std::fprintf( stderr, "pttest: --fps must be positive\n" );
+			return 2;
+		}
+		return runPipe( width, height, fps, scriptPath, overrides );
 	}
 
 	//-----------------------------------------------------------------------

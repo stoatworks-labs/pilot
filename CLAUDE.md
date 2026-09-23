@@ -19,6 +19,7 @@ in `Loader.cpp`.
 - Set anything by name: `--set "Progress=0.6" --set "Type=2" --set "Baud=0.8"`
 - List parameters: `./build/pttest --list`
 - Other pictures: `--flat 0` (uniform), `--quads` (four flat quadrants, for probes)
+- Film: `ffmpeg ... -f rawvideo -pix_fmt rgba - | ./build/pttest --pipe --size 1920x1080 --fps 30 --script cues.txt | ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -i - out.mp4`
 
 ## Verify
 - Everything: `tools/verify.sh` (fresh **universal** Release build + every check, ~12 s)

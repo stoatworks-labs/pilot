@@ -132,8 +132,7 @@ that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
 Not done, and not pretended otherwise: no OpenFX port, no browser demo, no
-factory presets, no `--pipe` frame-streaming mode, and the universal build has
-never run on an Intel Mac.
+factory presets, and the universal build has never run on an Intel Mac.
 The `Baud` control drives the border's stripe rate and the Clip time period but
 **not** the reveal rate in Manual mode, which is deliberate and explained in
 AGENTS.md.
@@ -165,6 +164,7 @@ sizes on purpose:
     ./build/pttest --negative                    # break the model; every check must fail
     ./build/pttest --reveal --pixels             # through the real shader, two rasters
     ./build/pttest --bench                       # 720p through 4K
+    ./build/pttest --pipe --size 1920x1080 --fps 30 --script cues.txt   # raw RGBA in, out: for filming
     python3 tools/sweep.py                       # no control is silently dead
     tools/verify.sh                              # all of it, from a fresh universal build
 

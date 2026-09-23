@@ -370,8 +370,10 @@ Two things the table does not contain, and the absence is deliberate:
 - **`Bright = Auto`'s crossover is half way between the two hardware levels**
   (0.921 on the brightest channel in the cell). That is arithmetic; whether it is
   the right *aesthetic* call on real footage has not been checked.
-- **No OpenFX port, no browser demo, no factory presets, no `--pipe`
-  frame-streaming mode.** None of them are started.
+- **No OpenFX port, no browser demo, no factory presets.** None of them are
+  started. `pttest --pipe` (raw RGBA frames in and out, the fleet's format, with
+  a `frame Name value` cue sheet) was added on 2026-09-23 to film the video; it
+  is a renderer, asserts nothing, and no check runs through it.
 - **Render cost figures are macOS-only.** Nothing has timed the Windows build.
 
 ## 6. Open questions
