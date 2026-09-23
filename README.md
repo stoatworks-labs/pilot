@@ -2,7 +2,7 @@
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. **It has never been loaded
-> into Resolume.** Everything below is measured offline, through the real plugin
+> into Resolume on macOS** (see [Status](#status) for Windows). Everything below is measured offline, through the real plugin
 > class in a headless GL context: the address order exists twice — as the bit
 > layout and as a plain nested loop — and `pttest --agree` proves the two agree for
 > all 6144 addresses bitwise; `pttest --reveal` renders through the shipping shader
@@ -68,13 +68,19 @@ It is a transition in practice, and the fleet has none.
 
 ## Status
 
-**v0.1.0, 2026-09-22, and honestly early.**
+**v0.1.0, built 2026-09-22 and released 2026-09-23, and honestly
+early.**
 
-It has never been loaded into Resolume. Everything here is verified through the
-offline harness, which drives the real plugin class headlessly — so how the
-parameters *present* (whether four groups read sensibly in the inspector, whether
-the Ink and Paper dropdowns show as colours, whether Arena's premultiplied
-textures behave) is untested, and that is exactly what the harness cannot tell you.
+User guide: [docs/USER-GUIDE.md](docs/USER-GUIDE.md), also at
+https://stoatworks-labs.com/software/pilot/guide/
+
+It has never been loaded into Resolume on macOS. On Windows it has: a CI build of the v0.1.0 source went through the fleet's Arena gate on 2026-09-23 (Resolume Arena 7.27.1 on win-lab, Mesa llvmpipe, no GPU) and passed 9 of 9 checks. It loads from Extra Effects, registers as `SW Pilot` / `PT01` / effect, all 20 host parameters (Arena's Opacity plus these 19) match the declaration in name, order, type, range and default, it renders, and Arena's log stays clean. 12 of the 15 controls the gate probes measurably moved the picture and 3 (Type, Baud, Message On) were inconclusive: the border stripes move every frame, so the picture's own noise floor (about 40 levels) hides smaller changes. None read as dead. It says nothing about speed or a real GPU.
+
+Everything here is verified through the offline harness, which drives the real
+plugin class headlessly — so how the parameters *present* (whether four groups
+read sensibly in the inspector, whether the Ink and Paper dropdowns show as
+colours, whether Arena's premultiplied textures behave) is untested on macOS, and
+that is exactly what the harness cannot tell you.
 
 What is measured, on one M4 Max: the address order agrees with its independent
 derivation for all 6144 addresses, bitwise; the rendered frame matches the order
@@ -84,12 +90,18 @@ border advances by exactly 16 half-cycles per byte on every machine; the failure
 rate matches 1/r within four standard errors over 20,000 draws at five rates; and
 all 14 controls move the picture. Render cost is 0.09 ms/frame at 720p, 0.21 at
 1080p and 0.36 at 4K — about 2% of a 60 fps frame at 4K, because the two
-expensive passes run at 256×192 and 32×24 whatever the composition is.
+expensive passes run at 256×192 and 32×24 whatever the composition is (macOS
+figures only).
 
-Not done, and not pretended otherwise: no OpenFX port, no browser demo, no user
-guide, no factory presets, no `--pipe` frame-streaming mode. The Windows build has
-never been compiled — CI is written but has never run, because the repo does not
-exist yet. `StoatworksAbout.h` and `ATTRIBUTIONS.md` are provisional hand copies.
+CI (`ci.yml`) has run on GitHub's macOS runner, which has no GPU, so the harness
+fell back to Apple's software renderer: the ten model checks, the two rasterising
+checks (`--reveal`, `--pixels`) and the control sweep at 320×180 all passed on
+that second rasteriser. The Windows x64 DLL is compiled with MSVC by
+`release.yml` on GitHub.
+
+Not done, and not pretended otherwise: no OpenFX port, no browser demo, no
+factory presets, no `--pipe` frame-streaming mode, and the universal build has
+never run on an Intel Mac.
 The `Baud` control drives the border's stripe rate and the Clip time period but
 **not** the reveal rate in Manual mode, which is deliberate and explained in
 AGENTS.md.

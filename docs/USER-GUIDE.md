@@ -19,7 +19,7 @@ chose.
 > 640×480, at six points in the load, with zero disagreements; all 14 controls
 > are confirmed to change the picture. It has **never been loaded into Resolume
 > on macOS**, so how the controls *present* in the inspector is untested.
-> <!-- ARENA -->It has not yet been run in Resolume on Windows either.<!-- /ARENA -->
+> On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every control matching what the plugin declares — on software rendering, so that says nothing about a GPU.
 > **Try it on a spare layer first**, and please report anything that misbehaves.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human
