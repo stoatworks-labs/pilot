@@ -81,6 +81,17 @@ back in that order, and three things follow without being designed:
 
 It is a transition in practice, and the fleet has none.
 
+[![Pilot — your clip loads like a ZX Spectrum tape, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=c9zzg9t-Epc)
+
+*[Watch it](https://www.youtube.com/watch?v=c9zzg9t-Epc) — 56 seconds: the
+pilot tone in the border, the picture arriving in screen-memory order, colour
+last, attribute clash, a failed block and the load starting over, the four
+machines' borders, the Baud control, and the whole thing as a transition.
+Every frame is the real plugin's output: an FFGL plugin has no window, so the
+footage is rendered by this repository's own offline harness (`pttest --pipe`,
+driven by a cue sheet) rather than filmed off a screen, and the clips are
+Resolume's bundled demo media.*
+
 ## Controls
 
 - **Machine** — Type (ZX 48 / ZX 128 / C64 turbo / Amstrad), Baud, and the
