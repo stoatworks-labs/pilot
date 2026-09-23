@@ -43,6 +43,35 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: The model, with no GL context
+        # None of these opens a context, so none of them can be a property of
+        # a rasteriser or of a raster. Every one runs even after one fails.
+        run: |
+          failed=""
+          for t in agree order thirds attributes border error message clock names negative; do
+            ./build/pttest --$t >/dev/null 2>&1 && echo "ok   --$t" || { echo "FAIL --$t"; failed="$failed --$t"; }
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+      - name: The two that rasterise, on the runner's software renderer
+        # The runner has no GPU; the harness falls back to Apple's software
+        # renderer. These are the checks that could differ from this repo's
+        # development GPU, which is exactly why they run here.
+        run: |
+          failed=""
+          for t in reveal pixels; do
+            echo "::group::pttest --$t"
+            ./build/pttest --$t || failed="$failed --$t"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
+      - name: Controls
+        # Small, because the runner has no GPU and the question is only whether
+        # a control changed the picture at all.
+        timeout-minutes: 25
+        run: python3 tools/sweep.py --size 320x180
+
       # Uploading is not only for the artefact. This repo has no package
       # manifest, so github-actions is its only Dependabot ecosystem — and a
       # bump to actions/upload-artifact otherwise touches release.yml alone,
