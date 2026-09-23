@@ -1,12 +1,38 @@
 # Attributions
 
-pilot is built on other people's work. This file lists what that work is, who did
+Pilot is built on other people's work. This file lists what that work is, who did
 it, and what it is doing here.
 
-Everywhere else in the fleet this file is generated — the master lists live in the
-`stoatworks-backend` repo and are pushed out by `scripts/sync-attributions.py`. This
-copy is **provisional and hand-written**, because pilot is not in `projects.json` yet
-and there is nothing to generate from. The first real sync will overwrite it.
+It is generated — the master lists live in the `stoatworks-backend` repo and are
+pushed out by `scripts/sync-attributions.py`. Edit it there, not here.
+
+## Code we derived from other people's work
+
+Someone else solved this first, and this project would not exist in its current form without their work.
+
+### ZX Spectrum palette and attribute model — Stoatworks nesolume
+
+<https://github.com/stoatworks-labs/nesolume>  
+Licence: MIT  
+Copyright: Stoatworks Labs
+
+Same fleet, copied rather than shared: source/Spectrum.cpp takes the two hardware levels (0xD7 basic, 0xFF bright) and the GRB bit order from the ZX Spectrum rows of nesolume's source/Consoles.cpp, and the 8×8 attribute model — one ink, one paper and a BRIGHT bit per character cell — is the one nesolume's quantise stage implements. How the two colours are chosen is not from nesolume: nesolume models attribute clash, while pilot splits each cell at a threshold and takes the mean colour either side, modelling a screen converted before it went on tape.
+
+### Offline test card — Stoatworks nesolume
+
+<https://github.com/stoatworks-labs/nesolume>  
+Licence: MIT  
+Copyright: Stoatworks Labs
+
+The bands of tools/pttest's default picture — hue × brightness, overlapping discs on grey, a luminance ramp and a fine checkerboard — are the ones nesolume's harness uses, for the same reason: each makes a different kind of wrong answer visible.
+
+### 5×7 bitmap font — Stoatworks graticule
+
+<https://github.com/stoatworks-labs/graticule>  
+Licence: MIT  
+Copyright: Stoatworks Labs
+
+source/Font.{h,cpp} is graticule's font table, unchanged except for the namespace. It draws one string here: the Spectrum's R Tape loading error, 0:1.
 
 ## Third-party code this project uses
 
@@ -18,11 +44,9 @@ Libraries, SDKs and frameworks the project is built on or bundles.
 Licence: BSD-3-Clause  
 Copyright: FreeFrame
 
-Vendored as a git submodule at `external/ffgl`, pinned to `b1afaf9` like the rest of
-the fleet.
+Vendored as a git submodule at external/ffgl (third_party/ffgl in oxbow).
 
-The plugin ABI itself. An FFGL effect is defined by this SDK's headers — there is no
-other way to be loadable by Resolume Arena and Avenue.
+The plugin ABI itself. An FFGL effect or source is defined by this SDK's headers — there is no other way to be loadable by Resolume Arena and Avenue.
 
 ### GLEW — the OpenGL Extension Wrangler Library
 
@@ -30,8 +54,7 @@ other way to be loadable by Resolume Arena and Avenue.
 Licence: BSD-3-Clause (with Mesa 3-D and Khronos components)  
 Copyright: Milan Ikits, Marcelo E. Magallon and Lev Povalahev
 
-Arrives inside the FFGL submodule at `external/ffgl/deps/glew-2.1.0`. Not fetched
-separately.
+Arrives inside the FFGL submodule at external/ffgl/deps/glew-2.1.0. Not fetched separately.
 
 Resolves OpenGL entry points on Windows, where the system headers stop at OpenGL 1.1.
 
@@ -41,74 +64,18 @@ Resolves OpenGL entry points on Windows, where the system headers stop at OpenGL
 Licence: PNG Reference Library License (libpng)  
 Copyright: the PNG Reference Library authors
 
-Arrives inside the FFGL submodule, under the SDK's CustomThumbnail sample. Part of the
-upstream SDK tree rather than something this plugin calls directly — listed because it
-is present in the checkout.
+Arrives inside the FFGL submodule, under the SDK's CustomThumbnail sample.
 
-### zlib
-
-<https://zlib.net>  
-Licence: zlib  
-Copyright: Jean-loup Gailly and Mark Adler
-
-Ships with macOS. The offline harness links it to deflate the PNGs it writes, which is
-why `tools/pttest` has a fifty-line PNG writer rather than a vendored image library.
-
-## Code taken from sibling repos in this fleet
-
-All MIT, all Stoatworks Labs, all copied rather than referenced — these are separate
-repos with no shared library between them. Listed because "we wrote it" is not the
-same as "we wrote it *here*".
-
-### The ZX Spectrum palette — from `nesolume`
-
-`source/Spectrum.cpp` takes the two hardware levels (0xD7 basic, 0xFF bright) and the
-GRB bit order from the ZX Spectrum rows of nesolume's `source/Consoles.cpp`, which is
-where this fleet had already written them down and argued about them. The 8×8
-attribute model — one ink, one paper and a BRIGHT bit per character cell — is the same
-model nesolume's quantise stage implements, reused rather than rewritten.
-
-What is **not** from nesolume: how the two colours are chosen. nesolume pulls a pixel's
-chroma toward its cell's mean and keeps its own luminance, because it is modelling
-attribute *clash*. pilot splits the cell at a threshold and takes the mean colour
-either side, because it is modelling a screen that was *converted* to the Spectrum
-before it was ever put on tape.
-
-### The 5×7 bitmap font — from `graticule`
-
-`source/Font.{h,cpp}` is graticule's font table, unchanged except for the namespace.
-It draws one string here: the Spectrum's `R Tape loading error, 0:1`.
-
-### The offline test card — from `nesolume`
-
-The bands in `tools/pttest`'s default picture (hue × brightness, overlapping discs on
-grey, a luminance ramp, a fine checkerboard) are the ones nesolume's harness uses, and
-for the same reason: each band makes a different kind of wrong answer visible, where a
-photograph would hide all four.
-
-### `PassBuffer`, `Diag` and the About block
-
-`source/PassBuffer.{h,cpp}` (FFGLFBO with the SDK's leaked colour texture fixed),
-`source/Diag.{h,cpp}` (a log file, for the shader that will not compile) and the
-`StoatworksAbout*.h` trio are the fleet's shared pieces, copied from nesolume. The
-About headers are normally generated by `stoatworks-backend/scripts/sync-about.py`;
-these are provisional hand copies with `guide = ""`, exactly as graticule shipped.
+Part of the upstream SDK tree rather than something these plugins call directly — listed because it is present in the checkout.
 
 ## Inspirations
 
-What this set out to be. No code, assets or binaries from any of these were used or
-examined — the debt is to the idea.
+What this set out to be. No code, assets or binaries from any of these were used or examined — the debt is to the idea.
 
 ### The ZX Spectrum tape loader
 
-The display file's address layout, the 6912-byte screen, the attribute block arriving
-last and the border colours of the 48K ROM's loading routine are all published facts
-about a machine from 1982, implemented here from descriptions of how the hardware
-behaved. No ROM, no BIOS and no emulator code is present. The other three machines in
-`source/Machines.cpp` are loaders in the same shape with their own rates and colours,
-and only the ZX 48 row claims to model a specific documented routine — see AGENTS.md.
+The display file's address layout, the 6912-byte screen, the attribute block arriving last and the 48K ROM loader's border colours are published facts about a machine from 1982, implemented from descriptions of how the hardware behaved. No ROM, no BIOS and no emulator code is present. The other three machines are loaders in the same shape with their own rates and colours; only the ZX 48 claims to model a documented routine.
 
 ## Getting this wrong
 
-If your work is here and the description is inaccurate, the licence is wrong, or you
-would rather not be listed — open an issue and it will be fixed.
+If your work is here and the description is inaccurate, the licence is wrong, or you would rather not be listed — open an issue and it will be fixed.
