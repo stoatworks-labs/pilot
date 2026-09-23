@@ -142,8 +142,13 @@ checks (`--reveal`, `--pixels`) and the control sweep at 320×180 all passed on
 that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
-Not done, and not pretended otherwise: no OpenFX port, no browser demo, no
-factory presets, and the universal build has never run on an Intel Mac.
+Not done, and not pretended otherwise: no OpenFX port, no factory presets, and the
+universal build has never run on an Intel Mac. The
+[browser demo](https://pilot-demo.stoatworks-labs.com) runs the plugin's own raster,
+attribute and compose shaders ported to WebGL2, and `demo/tools/check_shaders.py` holds
+that GLSL character-for-character against `source/shaders/` — but the tape model beside
+it (`Loader.cpp`, the machine table, the controls) is a hand port to JavaScript, and
+nothing checks that.
 The `Baud` control drives the border's stripe rate and the Clip time period but
 **not** the reveal rate in Manual mode, which is deliberate and explained in
 AGENTS.md.

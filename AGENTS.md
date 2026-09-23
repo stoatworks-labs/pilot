@@ -370,8 +370,8 @@ Two things the table does not contain, and the absence is deliberate:
 - **`Bright = Auto`'s crossover is half way between the two hardware levels**
   (0.921 on the brightest channel in the cell). That is arithmetic; whether it is
   the right *aesthetic* call on real footage has not been checked.
-- **No OpenFX port, no browser demo, no factory presets.** None of them are
-  started. `pttest --pipe` (raw RGBA frames in and out, the fleet's format, with
+- **No OpenFX port, no factory presets.** Neither is started. (The browser demo
+  exists: see §8.) `pttest --pipe` (raw RGBA frames in and out, the fleet's format, with
   a `frame Name value` cue sheet) was added on 2026-09-23 to film the video; it
   is a renderer, asserts nothing, and no check runs through it.
 - **Render cost figures are macOS-only.** Nothing has timed the Windows build.
@@ -415,6 +415,68 @@ Two things the table does not contain, and the absence is deliberate:
 - Display name `SW Pilot`, FFGL id `PT01`, bundle id `com.stoatworks.ffgl.pilot`,
   version `0.1.0` in both `CMakeLists.txt` and `source/StoatworksAbout.h`.
 - Standard AI disclaimer in the README, and it says what the harness proves.
+
+## 8. The browser demo
+
+`demo/` is the page at **pilot-demo.stoatworks-labs.com**, built on the shared
+kit in `infrastructure/stoatworks-backend/resolume-demo/` (vendored into
+`demo/vendor/` by its `sync.sh` — fix a kit bug there, never here). Added
+2026-09-24. It is galvo's shape: shaders copied, CPU chain ported, and the two
+halves are not equally faithful.
+
+**What is the plugin's own code.** The three passes and the vertex stage —
+`kVertex`, `kRasterFragment`, `kAttrFragment` and `kComposeFragment` — copied
+into `demo/plugin.js` unedited, so the compose shader's copy of the address
+order is the one that paints the page. `demo/tools/check_shaders.py` compares
+all four character for character, and also holds the loading-error message's
+text, its origin and every glyph the page carries against `Pilot.cpp` and
+`Font.cpp`, row for row. `tools/verify.sh` runs it.
+
+**What is a port, checked by a reader and nothing else.** The whole CPU chain,
+because §2's rule — almost nothing is decided in the shader that could be
+decided on the CPU — means the shaders alone draw nothing: `Loader.cpp`
+(`HashInt`, `Hash3`, `Hash01`, `BlockFails`, `Evaluate`, `BorderAt`,
+`HalfCycleContinuous`, `ByteIndex`, `FlashColour`), the `Machines.cpp` table,
+`Controls.h`, `Spectrum.cpp`'s palette, `effectiveProgress()`,
+`buildMessageTexture()` and every uniform `ProcessOpenGL()` sets. Where the C++
+is `float` the port rounds through `Math.fround`, and the hash is exact in 32
+bits through `Math.imul`, so the same tape fails in the same blocks.
+
+That port was cross-checked once, on 2026-09-24, and nothing re-runs it:
+`HashInt` on five inputs including 0 and 2^32-1, `Hash3` on two triples,
+`Evaluate` at five error rates by five Progress positions (bytes revealed,
+attempt, message and blocks loaded — three of the 25 had a failure showing),
+`FlashColour` on four byte indices and `Baud` at one trim all printed
+identically from the JS and from `Loader.cpp` compiled beside it. To redo it,
+pull the port's functions out of `demo/plugin.js` into a `.mjs` and compile
+`Loader.cpp` and `Spectrum.cpp` into a one-file program beside it.
+
+**What is not the plugin.** The clock is the page's, in seconds — the page is
+the host and says seconds, as `pttest` does through `ForceSecondsClock()`,
+where the plugin would vote on the unit. Beat and Bar need a tempo and a bar
+phase and a browser has neither, so the page runs a 120 bpm transport from its
+own zero and hands the plugin's bar recovery that phase: the SDK's default
+tempo, and what `pttest` sends. The browser presents at the display's refresh
+rather than at 50 Hz, so the stripe count is the machine's but how the stripes
+seem to crawl is the display's. The About block is absent, and there is no
+audio caveat beyond that: the loading signal is drawn, never heard.
+
+**Decided without asking.** The page carries only the seventeen glyphs the
+message uses, not graticule's whole font; the check holds each one against
+`Font.cpp`. The presets are the page's own (the plugin ships none) and are
+plain parameter values — *Watch it load* is Clip time at ×4 baud, ten seconds a
+load. A line under the canvas reports bytes in, the attempt and which part of
+the display file is arriving, because in Manual nothing moves by itself and a
+visitor should be told that is the design.
+
+**Left stale on purpose.** `docs/USER-GUIDE.md` still says there is no browser
+demo. The guide is rendered to a PDF and to the website by `build_guides.py`,
+which is a release chore rather than a demo one; correct it at the next guide
+sync.
+
+Deploy with `cf-run npx wrangler deploy` from the repo root; there is no build
+step. Verify by content, not by status code:
+`curl -s 'https://pilot-demo.stoatworks-labs.com/?cb=1' | grep -o '<title>[^<]*'`.
 
 ## Notes
 

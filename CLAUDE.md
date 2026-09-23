@@ -39,6 +39,7 @@ in `Loader.cpp`.
   - `./build/pttest --pixels` — attributes, border and message
 - `./build/pttest --bench` — 720p, 1080p, 4K
 - `python3 tools/sweep.py` — no dead controls (`--size WxH`, `--frames N`)
+- `python3 demo/tools/check_shaders.py` — the browser demo still runs the plugin's GLSL
 
 ## Notes
 - **The address order is the plugin.** It exists twice — `zx::ScreenIndex` (the bit
@@ -84,8 +85,19 @@ in `Loader.cpp`.
 ## Not done yet
 - Never loaded into Resolume on macOS, and never installed into Arena there. On Windows, a CI build passed Resolume Arena 7.27.1's gate on llvmpipe on 2026-09-23, 9 of 9 (see README Status).
 - The universal build has never run on an Intel Mac.
-- No OpenFX port, no browser demo, no factory presets, no `--pipe`.
+- No OpenFX port, no factory presets.
 - Render cost figures are macOS-only.
+
+## Browser demo
+
+`demo/` is the page at **pilot-demo.stoatworks-labs.com**: the plugin's own
+shaders, copied across unedited, plus a hand port of the whole CPU chain —
+`Loader.cpp`, `Machines.cpp`, `Controls.h`, the palette and
+`effectiveProgress()`. The kit in `demo/vendor/` is vendored from
+`infrastructure/stoatworks-backend/resolume-demo/` by its `sync.sh` — fix a kit
+bug THERE, never here. There is no build step; `cf-run npx wrangler deploy` from
+the repo root uploads `demo/` as it stands, and the page is verified by content
+rather than by status code. `AGENTS.md` §8 has what the page leaves out and why.
 
 ## Diagnostics
 
