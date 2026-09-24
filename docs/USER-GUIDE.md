@@ -286,7 +286,10 @@ Nothing has been timed on Windows or on an Intel Mac.
 - **Bar is always four beats.**
 - **At the end of an error hold the picture jumps**, for one frame, to the
   retry's progress. A real machine drew the retry over the old picture.
-- **No factory presets**, no OpenFX port and no browser demo.
+- **No factory presets** and no OpenFX port.
+- **There is a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
+  It is a port to a web page, not the plugin: the shaders run in WebGL2 and any CPU
+  half is rewritten in JavaScript. The page lists what it does not reproduce.
 
 ---
 
