@@ -17,6 +17,9 @@
 #                 640x480, because a thresholded position measurement quantises
 #                 to whole cells and a check that only runs at one raster cannot
 #                 tell you that
+#   openfx copy   the OpenFX build's CPU copy of the passes (Render.cpp) against
+#                 the GPU, pixel by pixel, every difference explained or a
+#                 failure -- and its transition against the GPU's own frames
 #   sweep         does every control change the picture
 #   bench         the render cost, for the record -- not pass/fail, because
 #                 there is no threshold worth asserting on somebody else's GPU
@@ -32,6 +35,10 @@
 #                 the plist nor the cause
 #   codesign      the exact command the release job runs, against a copy
 #   oxbow         does a host see the right name, id and type
+#   openfx        the OpenFX bundle: plist, entry point, both slices, the
+#                 ad-hoc sign, and an OFX host (ofxprobe) loading it, listing
+#                 the Transition context and rendering a frame that is not its
+#                 input
 #
 # The last five are release-job work done locally on purpose. A check that only
 # runs in CI, after a tag, is a check that will catch you after the tag -- and
@@ -185,6 +192,21 @@ for t in reveal pixels; do
 	if "$BUILD/pttest" --$t >/dev/null 2>&1; then pass "pttest --$t"; else fail "pttest --$t"; fi
 done
 
+#---------------------------------------------------------------------------
+# The OpenFX build renders with Render.cpp, a CPU copy of the three passes.
+# --cpu holds it to the GPU at 1920x1080, 640x480 and on ofxprobe's own ramp;
+# --transition holds the OpenFX transition to what the GPU's frames imply.
+#---------------------------------------------------------------------------
+step "openfx copy (Render.cpp against the GPU)"
+for t in cpu transition; do
+	if "$BUILD/pttest" --$t >/tmp/pilot-$t.log 2>&1; then
+		pass "pttest --$t"
+	else
+		fail "pttest --$t -- see /tmp/pilot-$t.log"
+		grep FAIL /tmp/pilot-$t.log | head -5
+	fi
+done
+
 step "sweep"
 if python3 tools/sweep.py >/tmp/pilot-sweep.txt 2>&1; then
 	tail -1 /tmp/pilot-sweep.txt | sed 's/^/   /'
@@ -196,6 +218,7 @@ fi
 
 step "bench (for the record, not pass/fail)"
 "$BUILD/pttest" --bench 2>&1 | sed -n '3,8p'
+"$BUILD/pttest" --cpu-bench 2>&1 | sed -n '3,8p'
 
 BUNDLE="$BUILD/Pilot.bundle"
 BIN="$BUNDLE/Contents/MacOS/Pilot"
@@ -261,6 +284,82 @@ if [ "$(uname)" = "Darwin" ] && [ -d "$BUNDLE" ]; then
 		esac
 	else
 		printf '   skipped: oxbow not built at %s\n' "$OXBOW"
+	fi
+fi
+
+#---------------------------------------------------------------------------
+# The OpenFX bundle. Release-job work done locally, for the reason at the top.
+#
+# cmake/InfoOFX.plist.in is copied from repo to repo, and a CFBundleExecutable
+# naming the wrong binary passes the build, lipo, nm and a render -- and fails
+# only in codesign, after the tag, with a message about a nested object.
+#---------------------------------------------------------------------------
+OFX="$BUILD/Pilot.ofx.bundle"
+OFXBIN="$OFX/Contents/MacOS/Pilot.ofx"
+
+if [ "$(uname)" = "Darwin" ]; then
+	step "openfx"
+	if [ ! -f "$OFXBIN" ]; then
+		fail "no OpenFX bundle at $OFX (built with -DBUILD_OFX=OFF?)"
+	else
+		exe=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$OFX/Contents/Info.plist" 2>/dev/null)
+		if [ -n "$exe" ] && [ -f "$OFX/Contents/MacOS/$exe" ]; then
+			pass "CFBundleExecutable ($exe) is on disk"
+		else
+			fail "CFBundleExecutable is '$exe' but no such binary exists -- codesign will fail after the tag"
+		fi
+		ident=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$OFX/Contents/Info.plist" 2>/dev/null)
+		if [ "$ident" = "com.stoatworks.pilot.ofx" ]; then
+			pass "CFBundleIdentifier is com.stoatworks.pilot.ofx"
+		else
+			fail "CFBundleIdentifier is '$ident'"
+		fi
+
+		# Captured, not piped into grep -q: see the registration step.
+		syms=$(nm -gU "$OFXBIN" 2>/dev/null)
+		case "$syms" in
+			*_OfxGetPlugin*) pass "exports OfxGetPlugin" ;;
+			*) fail "no OfxGetPlugin -- no OpenFX host will see a plugin" ;;
+		esac
+
+		archs=$(lipo -archs "$OFXBIN" 2>/dev/null)
+		case "$archs" in *arm64*) pass "arm64 present" ;; *) fail "no arm64 (got: $archs)" ;; esac
+		case "$archs" in *x86_64*) pass "x86_64 present" ;; *) fail "no x86_64 (got: $archs)" ;; esac
+
+		tmp=$(mktemp -d)
+		cp -R "$OFX" "$tmp/" 2>/dev/null
+		if codesign --force --sign - --timestamp=none "$tmp/Pilot.ofx.bundle" >/dev/null 2>&1; then
+			pass "ad-hoc signs (the command the release job runs)"
+		else
+			fail "ad-hoc signing the OpenFX bundle failed"
+		fi
+		rm -rf "$tmp"
+
+		# A host loading it. ofxprobe also scans /Library/OFX/Plugins and takes
+		# the FIRST bundle with a matching identifier, so an installed Pilot
+		# would be what got tested; say so rather than report on the wrong one.
+		OFXPROBE="${OFXPROBE:-../resolume-ofx-bridge/build/ofxprobe}"
+		[ -x "$OFXPROBE" ] || OFXPROBE="$HOME/Projects/resolume/resolume-ofx-bridge/build/ofxprobe"
+		if [ ! -x "$OFXPROBE" ]; then
+			printf '   skipped: ofxprobe not built at %s\n' "$OFXPROBE"
+		elif [ -e "/Library/OFX/Plugins/Pilot.ofx.bundle" ]; then
+			printf '   skipped: /Library/OFX/Plugins/Pilot.ofx.bundle would shadow the build in ofxprobe\n'
+		else
+			listing=$("$OFXPROBE" --dir "$BUILD" 2>&1)
+			case "$listing" in
+				*com.stoatworks.pilot*OfxImageEffectContextTransition*) pass "a host lists it, with the Transition context" ;;
+				*) fail "ofxprobe does not list com.stoatworks.pilot with a Transition context" ;;
+			esac
+			result=$("$OFXPROBE" --dir "$BUILD" --render com.stoatworks.pilot --size 640x360 2>&1)
+			case "$result" in
+				*"rendered 640x360"*) ;;
+				*) fail "the OpenFX bundle does not render"; printf '%s\n' "$result" | sed 's/^/     /' ;;
+			esac
+			case "$result" in
+				*" 0 of "*"bytes differ"*) fail "the OpenFX bundle renders its input unchanged" ;;
+				*"bytes differ"*) pass "it renders ($(printf '%s\n' "$result" | grep -oE '[0-9]+ of [0-9]+ bytes differ'))" ;;
+			esac
+		fi
 	fi
 fi
 
