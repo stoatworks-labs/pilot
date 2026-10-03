@@ -504,12 +504,94 @@ void Frame( const frame::Uniforms& u, const View& picture, const View& underlay,
 		            out + static_cast< size_t >( y ) * outW * 4 );
 }
 
-void Transition( const View& from, const View& to, float transition, double seconds,
-                 const frame::HostValues& controls, int outW, int outH, float* out )
+//---------------------------------------------------------------------------
+// The transition's ends. See Render.h.
+//---------------------------------------------------------------------------
+namespace
 {
-	const float progress     = std::clamp( transition, 0.0f, 1.0f );
-	const frame::Uniforms u  = frame::Prepare( controls, progress, seconds );
+double ClampedLength( double endLength )
+{
+	return std::clamp( endLength, 0.0, static_cast< double >( kEndLengthMax ) );
+}
+} // namespace
+
+float TransitionProgress( double transition, Ends ends, double endLength )
+{
+	const double t = std::clamp( transition, 0.0, 1.0 );
+	if( ends == Ends::Cut )
+		return static_cast< float >( t );
+
+	const double length = ClampedLength( endLength );
+	const double span   = 1.0 - 2.0 * length;
+	if( !( span > 0.0 ) )
+		return t < 0.5 ? 0.0f : 1.0f;//the load takes no time at all
+	return static_cast< float >( std::clamp( ( t - length ) / span, 0.0, 1.0 ) );
+}
+
+float EffectStrength( double transition, Ends ends, double endLength )
+{
+	if( ends == Ends::Cut )
+		return 1.0f;
+
+	//The distance to the nearer end of the transition, 0 at both ends.
+	const double t    = std::clamp( transition, 0.0, 1.0 );
+	const double edge = std::min( t, 1.0 - t );
+	if( edge <= 0.0 )
+		return 0.0f;//exactly the plain clip, whatever the length
+
+	const double length = ClampedLength( endLength );
+	if( edge >= length )
+		return 1.0f;//exactly the effect between the ramps (and everywhere else at length 0)
+
+	//Smoothstep: 0 and 1 at the ends of the ramp, with zero slope at both.
+	const double x = edge / length;
+	return static_cast< float >( x * x * ( 3.0 - 2.0 * x ) );
+}
+
+void PlainRow( const View& image, int outW, int outH, int y, int x0, int x1, float* out )
+{
+	const float w        = static_cast< float >( std::max( outW, 1 ) );
+	const float h        = static_cast< float >( std::max( outH, 1 ) );
+	const float pY       = ( static_cast< float >( y ) + 0.5f ) / h;
+	const bool sameSize  = image.width == outW && image.height == outH;
+	for( int x = x0; x < x1; ++x, out += 4 )
+	{
+		if( sameSize )
+			Texel( image, x, y, out );
+		else
+			Bilinear( image, ( static_cast< float >( x ) + 0.5f ) / w, pY, out );
+	}
+}
+
+void Transition( const View& from, const View& to, double transition, double seconds,
+                 const frame::HostValues& controls, Ends ends, double endLength, int outW, int outH, float* out )
+{
+	const float strength = EffectStrength( transition, ends, endLength );
+	const View& plain    = transition < 0.5 ? from : to;
+	const size_t row     = static_cast< size_t >( outW ) * 4;
+
+	if( strength <= 0.0f )
+	{
+		for( int y = 0; y < outH; ++y )
+			PlainRow( plain, outW, outH, y, 0, outW, out + y * row );
+		return;
+	}
+
+	const float progress    = TransitionProgress( transition, ends, endLength );
+	const frame::Uniforms u = frame::Prepare( controls, progress, seconds );
 	Frame( u, to, from, outW, outH, out );
+	if( strength >= 1.0f )
+		return;
+
+	//The ramp: a crossfade between the plain clip and the effect, premultiplied.
+	std::vector< float > plainRow( row );
+	for( int y = 0; y < outH; ++y )
+	{
+		PlainRow( plain, outW, outH, y, 0, outW, plainRow.data() );
+		float* o = out + y * row;
+		for( size_t k = 0; k < row; ++k )
+			o[ k ] = plainRow[ k ] * ( 1.0f - strength ) + o[ k ] * strength;
+	}
 }
 
 } // namespace pilot::render

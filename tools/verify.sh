@@ -38,7 +38,9 @@
 #   openfx        the OpenFX bundle: plist, entry point, both slices, the
 #                 ad-hoc sign, and an OFX host (ofxprobe) loading it, listing
 #                 the Transition context and rendering a frame that is not its
-#                 input
+#                 input -- and, given a probe that can host a Transition
+#                 (OFXPROBE=...), rendering one: Cut against Render.cpp, and
+#                 Fade's ends, ramps and middle
 #
 # The last five are release-job work done locally on purpose. A check that only
 # runs in CI, after a tag, is a check that will catch you after the tag -- and
@@ -358,6 +360,122 @@ if [ "$(uname)" = "Darwin" ]; then
 			case "$result" in
 				*" 0 of "*"bytes differ"*) fail "the OpenFX bundle renders its input unchanged" ;;
 				*"bytes differ"*) pass "it renders ($(printf '%s\n' "$result" | grep -oE '[0-9]+ of [0-9]+ bytes differ'))" ;;
+			esac
+
+			# The TRANSITION, rendered through a host -- when the probe can
+			# host one (an ofxprobe with --context; the bridge's stock probe
+			# instantiates the Filter context only, so this is skipped unless
+			# OFXPROBE names one that can). Small pictures, opaque, so the PPM
+			# the host writes is the whole picture:
+			#
+			#   Cut  the raw load. Against Render.cpp in this harness
+			#        (pttest --pipe --via-cpu): the incoming picture's Paper
+			#        and Black frames say which addresses have arrived, and the
+			#        transition is the outgoing picture through the rest --
+			#        byte for byte, at two positions. The control, the host at
+			#        0.3 against the harness at 0.35, must miss.
+			#   Fade the default. Transition 0 is SourceFrom and 1 is SourceTo
+			#        byte for byte, rendered and through isIdentity, in 8-bit
+			#        and float; on a ramp it is ( 1 - s ) plain + s Cut at the
+			#        remapped progress, within one level; between the ramps it
+			#        is that Cut, byte for byte.
+			help=$("$OFXPROBE" --help 2>&1)
+			case "$help" in
+				*"--context"*)
+					if python3 - "$OFXPROBE" "$BUILD" >/tmp/pilot-ofx-transition.log 2>&1 <<'TRANSITION_PY'
+import os, subprocess, sys, tempfile
+probe, build = sys.argv[1:3]
+pttest = os.path.join(build, "pttest")
+W, H, FRAME = 320, 180, 13
+def picture(kind):
+	out = bytearray()
+	for y in range(H):
+		for x in range(W):
+			u, v = (x + 0.5) / W, (y + 0.5) / H
+			if kind == "a":
+				c = ((255, 255, 255), (255, 255, 0), (0, 255, 255), (0, 255, 0), (255, 0, 255), (255, 0, 0), (0, 0, 255), (30, 30, 30))[min(7, int(u * 8))]
+			else:
+				d = (u - 0.5) ** 2 + (v - 0.5) ** 2
+				c = (int(255 * u), int(255 * v), 200) if d > 0.06 else (240, 120, 30)
+			out += bytes(c)
+	return bytes(out)
+tmp = tempfile.mkdtemp()
+rgb = {}
+for k in "ab":
+	rgb[k] = picture(k)
+	open(os.path.join(tmp, k + ".ppm"), "wb").write(b"P6\n%d %d\n255\n" % (W, H) + rgb[k])
+def host(t, sets, depth="byte"):
+	out = os.path.join(tmp, "host.ppm")
+	cmd = [probe, "--no-system-dirs", "--dir", build, "--render", "com.stoatworks.pilot", "--context", "transition",
+	       "--from", os.path.join(tmp, "a.ppm"), "--to", os.path.join(tmp, "b.ppm"), "--frame-rate", "25",
+	       "--time", str(FRAME), "--transition", repr(t), "--depth", depth, "--out-only", out]
+	for s in sets:
+		cmd += ["--set", s] if s != "--identity" else [s]
+	r = subprocess.run(cmd, capture_output=True, text=True)
+	where = [l.split("instance from ", 1)[1].rsplit(" (", 1)[0] for l in r.stdout.splitlines() if "instance from " in l]
+	if r.returncode != 0 or not where or os.path.realpath(os.path.dirname(where[0])) != os.path.realpath(build):
+		print(r.stdout, r.stderr)
+		sys.exit(1)
+	data = open(out, "rb").read()
+	return data[data.index(b"255\n") + 4:]
+def harness(progress, background):
+	rgba = bytearray()
+	for i in range(0, len(rgb["b"]), 3):
+		rgba += rgb["b"][i:i + 3] + b"\xff"
+	cmd = [pttest, "--pipe", "--via-cpu", "--size", "%dx%d" % (W, H), "--fps", "25",
+	       "--set", "Progress=%r" % progress, "--set", "Background=%d" % background]
+	r = subprocess.run(cmd, input=bytes(rgba) * (FRAME + 1), capture_output=True)
+	frame = r.stdout[FRAME * W * H * 4:]
+	return bytes(frame[i] for i in range(len(frame)) if i % 4 != 3)
+def cut_expected(progress):
+	paper, black = harness(progress, 0), harness(progress, 1)
+	out = bytearray(paper)
+	for i in range(0, len(out), 3):
+		if paper[i:i + 3] != black[i:i + 3]:
+			out[i:i + 3] = rgb["a"][i:i + 3]
+	return bytes(out)
+def worst(a, b):
+	return max(abs(x - y) for x, y in zip(a, b))
+bad = 0
+for t in (0.3, 0.6):
+	same = host(t, ["ends=1"]) == cut_expected(float(t))
+	print("Cut  Transition %s: %s the harness's Render.cpp" % (t, "byte-identical to" if same else "DIFFERS from"))
+	bad += not same
+w = worst(host(0.3, ["ends=1"]), cut_expected(0.35))
+print("control: the host at 0.3 against the harness at 0.35: worst %d of 255" % w)
+bad += w <= 1
+for depth in ("byte", "float"):
+	for t, k in ((0, "a"), (1, "b")):
+		for how in ([], ["--identity"]):
+			same = host(t, how, depth) == rgb[k]
+			print("Fade Transition %s %-5s %-10s is %s: %s" % (t, depth, " ".join(how) or "rendered", "SourceFrom" if k == "a" else "SourceTo", "byte-identical" if same else "DIFFERS"))
+			bad += not same
+L = 0.15
+def progress(t):
+	return min(max((t - L) / (1 - 2 * L), 0.0), 1.0)
+def strength(t):
+	e = min(t, 1 - t)
+	x = e / L
+	return 1.0 if e >= L else x * x * (3 - 2 * x)
+for t, k in ((0.06, "a"), (0.95, "b")):
+	s = strength(t)
+	got, cut = host(t, []), host(progress(t), ["ends=1"])
+	w = max(abs(g - ((1 - s) * p + s * c)) for g, p, c in zip(got, rgb[k], cut))
+	print("Fade Transition %s, s %.3f: worst %.2f of 255 from ( 1 - s ) plain + s Cut" % (t, s, w))
+	bad += w > 1
+same = host(0.5, []) == host(progress(0.5), ["ends=1"])
+print("Fade Transition 0.5, between the ramps: %s Cut at %.4f" % ("byte-identical to" if same else "DIFFERS from", progress(0.5)))
+bad += not same
+sys.exit(1 if bad else 0)
+TRANSITION_PY
+					then
+						pass "renders as a Transition in an OFX host: Cut byte-identical to Render.cpp (control rejected); Fade's ends byte-identical to the clips in 8-bit and float, its ramp the crossfade, its middle Cut"
+					else
+						sed 's/^/     /' /tmp/pilot-ofx-transition.log
+						fail "the OpenFX transition rendered through $OFXPROBE disagrees -- see /tmp/pilot-ofx-transition.log"
+					fi
+					;;
+				*) printf '   skipped: this ofxprobe cannot host a Transition (no --context); OFXPROBE=<a probe that can> to render one\n' ;;
 			esac
 		fi
 	fi

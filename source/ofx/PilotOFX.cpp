@@ -37,8 +37,8 @@
 ///
 /// ------------------------------------------------------------ the transition
 ///
-/// SourceTo is the picture being loaded and the host's Transition parameter is
-/// Progress. SourceFrom is what was on screen before the tape started, and it
+/// SourceTo is the picture being loaded and the host's Transition parameter
+/// drives Progress (see the ends, below). SourceFrom is what was on screen before the tape started, and it
 /// takes the one role in the compose pass the FFGL build gives the clip a
 /// second time: what Background = Clip shows through an address that has not
 /// arrived, and what Mix fades against. In the filter that is the Source
@@ -48,10 +48,30 @@
 /// defaults to Clip there, since under Paper the outgoing shot would never
 /// appear at all.
 ///
-/// The transition's last frame is the loaded Spectrum screen, not SourceTo:
-/// the edit then cuts to the real picture. That is the effect, not a defect --
-/// at Progress 1 the FFGL build shows the same screen -- and it is said in the
-/// description so nobody mistakes it for a dropped frame.
+/// ------------------------------------------------------- the transition's ends
+///
+/// The tape alone does not begin on SourceFrom -- its first frame already has
+/// the pilot-tone border -- or end on SourceTo: its last is the loaded
+/// Spectrum screen. On an NLE timeline both read as a glitch. So the
+/// transition, and only the transition, has two controls of its own, declared
+/// after everything else, with lenticular's names, options and defaults:
+///
+///   Ends        Fade (default): the tape loads over the middle of the
+///               transition -- progress = clamp( ( T - L ) / ( 1 - 2L ) ) --
+///               and over the first and last End Length the picture
+///               crossfades, a smoothstep in premultiplied colour, from exactly
+///               SourceFrom into the empty screen and its border, and from the
+///               loaded screen into exactly SourceTo.
+///               Cut: the raw load over the whole transition, as the first
+///               OpenFX build had it, bit for bit.
+///   End Length  0..0.5 of the transition each ramp takes; 0.15 by default.
+///
+/// At exactly 0 and 1 under Fade the picture is the plain clip, said twice:
+/// `isIdentity` names the clip, and a render asked anyway copies the clip's
+/// pixels in its own format when it shares the output's -- so the ends are the
+/// clips byte for byte, not a round trip through float. The arithmetic is
+/// render::TransitionProgress and render::EffectStrength in Render.cpp, where
+/// render::Transition, the pure function the harness checks, uses it too.
 ///
 /// --------------------------------------------------------------- and tiles
 ///
@@ -60,6 +80,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -90,9 +111,11 @@ constexpr const char* kPluginDescription =
 	"the image lands in monochrome and colours in at the very end.\n\n"
 	"As an effect, keyframe Progress or set Sync to Clip time, where the tape "
 	"runs at the baud rate. As a transition, the transition's own position is "
-	"the tape: the outgoing shot shows through every address that has not "
-	"arrived yet (Background = Clip), and the last frame is the loaded "
-	"Spectrum screen, after which the edit cuts to the real picture.\n\n"
+	"the tape, and the outgoing shot shows through every address that has not "
+	"arrived yet (Background = Clip). With Ends on Fade, the default, it starts "
+	"on exactly the outgoing clip, fades into the empty screen and its border, "
+	"loads, and fades from the loaded screen to exactly the incoming clip. Ends "
+	"on Cut is the raw load from the first frame to the last.\n\n"
 	"Note: the Resolume build can also sync the load to the beat or the bar. "
 	"OpenFX hosts give a plugin no tempo, so those two Sync modes are absent "
 	"here rather than present and doing nothing.\n\n"
@@ -113,6 +136,8 @@ constexpr const char* kParamBorderWidth = "borderWidth";
 constexpr const char* kParamPilotLength = "pilotLength";
 constexpr const char* kParamMix         = "mix";
 constexpr const char* kParamBackground  = "background";
+constexpr const char* kParamEnds        = "ends";     ///< the transition only
+constexpr const char* kParamEndLength   = "endLength";///< the transition only
 
 /// The Sync options this build has: the first two of the FFGL build's four, at
 /// the same indices.
@@ -193,7 +218,24 @@ private:
 };
 
 //---------------------------------------------------------------------------
-/// Pass 3, per output row, on the host's threads, and the conversion out.
+/// Everything one render needs, worked out on the calling thread before a
+/// pixel is touched: OFX forbids reading a parameter during the threaded part
+/// of a render.
+//---------------------------------------------------------------------------
+struct Moment
+{
+	frame::Uniforms uniforms;
+
+	/// How much of the effect is seen against the plain clip (the transition's
+	/// ends; render::EffectStrength). Always 1 in the filter, and under Cut.
+	float strength = 1.0f;
+	/// SourceFrom in the first half of a transition, SourceTo in the second.
+	bool plainIsFrom = true;
+};
+
+//---------------------------------------------------------------------------
+/// Pass 3, per output row, on the host's threads; the ends' crossfade; and
+/// the conversion out.
 //---------------------------------------------------------------------------
 class ComposeBase : public OFX::ImageProcessor
 {
@@ -203,22 +245,24 @@ public:
 	{
 	}
 
-	void setup( const frame::Uniforms& u, const render::Raster& r, const render::Attributes& a,
-	            const render::View& under, const OfxRectI& frameBounds, bool outPremultiplied )
+	void setup( const Moment& m, const render::Raster& r, const render::Attributes& a, const render::View& under,
+	            const render::View& plainView, const OfxRectI& frameBounds, bool outPremultiplied )
 	{
-		uniforms      = &u;
+		moment        = &m;
 		raster        = &r;
 		attributes    = &a;
 		underlay      = under;
+		plain         = plainView;
 		bounds        = frameBounds;
 		premultiplied = outPremultiplied;
 	}
 
 protected:
-	const frame::Uniforms* uniforms      = nullptr;
+	const Moment* moment                 = nullptr;
 	const render::Raster* raster         = nullptr;
 	const render::Attributes* attributes = nullptr;
 	render::View underlay;
+	render::View plain;
 	OfxRectI bounds    = { 0, 0, 0, 0 };
 	bool premultiplied = true;
 };
@@ -240,15 +284,36 @@ public:
 		if( span <= 0 )
 			return;
 
+		const float strength = moment->strength;
 		std::vector< float > row( static_cast< size_t >( span ) * 4 );
+		std::vector< float > plainRow( strength < 1.0f ? row.size() : 0 );
 
 		for( int y = window.y1; y < window.y2; ++y )
 		{
 			if( _effect.abort() )
 				break;
 
-			render::ComposeRow( *uniforms, *raster, *attributes, underlay, outW, outH, y - bounds.y1,
-			                    window.x1 - bounds.x1, window.x2 - bounds.x1, row.data() );
+			const int ry = y - bounds.y1;
+			const int x0 = window.x1 - bounds.x1;
+			const int x1 = window.x2 - bounds.x1;
+
+			if( strength <= 0.0f )
+			{
+				//An end of the transition under Fade: the plain clip alone.
+				render::PlainRow( plain, outW, outH, ry, x0, x1, row.data() );
+			}
+			else
+			{
+				render::ComposeRow( moment->uniforms, *raster, *attributes, underlay, outW, outH, ry, x0, x1, row.data() );
+				if( strength < 1.0f )
+				{
+					//An end's ramp: the plain clip and the effect, crossfaded
+					//in premultiplied colour.
+					render::PlainRow( plain, outW, outH, ry, x0, x1, plainRow.data() );
+					for( size_t k = 0; k < row.size(); ++k )
+						row[ k ] = plainRow[ k ] * ( 1.0f - strength ) + row[ k ] * strength;
+				}
+			}
 
 			PIX* dst = static_cast< PIX* >( _dstImg->getPixelAddress( window.x1, y ) );
 			if( dst == nullptr )
@@ -286,6 +351,49 @@ private:
 	}
 };
 
+/// The plain clip into the output, pixel for pixel in its own format, when it
+/// has the output's bounds, depth, components and premultiplication -- so an
+/// end of a Fade transition is the clip byte for byte, not a round trip
+/// through float that is merely close. False when it does not, and the caller
+/// renders it through render::PlainRow instead.
+bool copyIfSameFormat( OFX::Image* src, OFX::Image* dst, const OfxRectI& window )
+{
+	if( src == nullptr || dst == nullptr )
+		return false;
+	const OfxRectI sb = src->getBounds();
+	const OfxRectI db = dst->getBounds();
+	if( sb.x1 != db.x1 || sb.y1 != db.y1 || sb.x2 != db.x2 || sb.y2 != db.y2 || src->getPixelDepth() != dst->getPixelDepth()
+	    || src->getPixelComponents() != dst->getPixelComponents() || src->getPreMultiplication() != dst->getPreMultiplication() )
+		return false;
+
+	const size_t components = dst->getPixelComponents() == OFX::ePixelComponentRGBA ? 4 : 3;
+	size_t bytes            = 0;
+	switch( dst->getPixelDepth() )
+	{
+		case OFX::eBitDepthUByte:
+			bytes = 1;
+			break;
+		case OFX::eBitDepthUShort:
+			bytes = 2;
+			break;
+		case OFX::eBitDepthFloat:
+			bytes = 4;
+			break;
+		default:
+			return false;
+	}
+	const size_t rowBytes = static_cast< size_t >( window.x2 - window.x1 ) * components * bytes;
+	for( int y = window.y1; y < window.y2; ++y )
+	{
+		const void* from = src->getPixelAddress( window.x1, y );
+		void* to         = dst->getPixelAddress( window.x1, y );
+		if( from == nullptr || to == nullptr )
+			return false;
+		std::memcpy( to, from, rowBytes );
+	}
+	return true;
+}
+
 //---------------------------------------------------------------------------
 class PilotPlugin : public OFX::ImageEffect
 {
@@ -298,9 +406,11 @@ public:
 		dstClip = fetchClip( kOfxImageEffectOutputClipName );
 		if( transition )
 		{
-			fromClip = fetchClip( kOfxImageEffectTransitionSourceFromClipName );
-			toClip   = fetchClip( kOfxImageEffectTransitionSourceToClipName );
-			position = fetchDoubleParam( kOfxImageEffectTransitionParamName );
+			fromClip  = fetchClip( kOfxImageEffectTransitionSourceFromClipName );
+			toClip    = fetchClip( kOfxImageEffectTransitionSourceToClipName );
+			position  = fetchDoubleParam( kOfxImageEffectTransitionParamName );
+			ends      = fetchChoiceParam( kParamEnds );
+			endLength = fetchDoubleParam( kParamEndLength );
 		}
 		else
 		{
@@ -345,20 +455,32 @@ public:
 
 		//Every parameter is read here, on the calling thread, before a pixel is
 		//touched: OFX forbids reading one during the threaded part of a render.
-		const frame::Uniforms u = uniformsAt( args.time );
+		const Moment m = momentAt( args.time );
+
+		OFX::Image* plainImage = m.plainIsFrom && from != nullptr ? from.get() : to.get();
+		OFX::Clip* plainClip   = m.plainIsFrom && from != nullptr ? fromClip : toClip;
+
+		//An end of a Fade transition is the plain clip. Copied in its own
+		//format when it can be, so it is the clip byte for byte; a host that
+		//asked isIdentity first never gets here.
+		if( m.strength <= 0.0f && copyIfSameFormat( plainImage, dst.get(), args.renderWindow ) )
+			return;
 
 		const render::View picture = viewOf( to.get(), isPremultiplied( toClip ) );
 		//A transition with nothing outgoing -- the head of a timeline, say --
 		//loads over the incoming picture, as the filter does.
 		const render::View underlay = from != nullptr ? viewOf( from.get(), isPremultiplied( fromClip ) ) : picture;
+		const render::View plain    = viewOf( plainImage, isPremultiplied( plainClip ) );
 
+		//The raster and the cells, unless the picture is the plain clip alone.
 		render::Raster raster;
+		render::Attributes attributes;
+		if( m.strength > 0.0f )
 		{
 			RasterJob job( picture, raster );
 			job.multiThread();
+			render::Attribute( raster, m.uniforms.brightMode, attributes );
 		}
-		render::Attributes attributes;
-		render::Attribute( raster, u.brightMode, attributes );
 
 		const bool outPremultiplied = comps != OFX::ePixelComponentRGBA || isPremultiplied( dstClip );
 
@@ -366,18 +488,18 @@ public:
 		{
 			case OFX::eBitDepthUByte:
 				comps == OFX::ePixelComponentRGBA
-					? run< Compose< unsigned char, 4, 255 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied )
-					: run< Compose< unsigned char, 3, 255 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied );
+					? run< Compose< unsigned char, 4, 255 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied )
+					: run< Compose< unsigned char, 3, 255 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied );
 				break;
 			case OFX::eBitDepthUShort:
 				comps == OFX::ePixelComponentRGBA
-					? run< Compose< unsigned short, 4, 65535 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied )
-					: run< Compose< unsigned short, 3, 65535 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied );
+					? run< Compose< unsigned short, 4, 65535 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied )
+					: run< Compose< unsigned short, 3, 65535 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied );
 				break;
 			case OFX::eBitDepthFloat:
 				comps == OFX::ePixelComponentRGBA
-					? run< Compose< float, 4, 1 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied )
-					: run< Compose< float, 3, 1 > >( args, dst.get(), u, raster, attributes, underlay, bounds, outPremultiplied );
+					? run< Compose< float, 4, 1 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied )
+					: run< Compose< float, 3, 1 > >( args, dst.get(), m, raster, attributes, underlay, plain, bounds, outPremultiplied );
 				break;
 			default:
 				OFX::throwSuiteStatusException( kOfxStatErrUnsupported );
@@ -386,12 +508,30 @@ public:
 
 	bool isIdentity( const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip, double& identityTime ) override
 	{
+		identityTime = args.time;
+
+		//Under Fade, Transition 0 is SourceFrom and 1 is SourceTo, exactly: say
+		//so, and a host may hand the clip on without rendering.
+		if( transition )
+		{
+			const double t       = position->getValueAtTime( args.time );
+			const float strength = render::EffectStrength( t, endsAt( args.time ), endLength->getValueAtTime( args.time ) );
+			if( strength <= 0.0f )
+			{
+				identityClip = t < 0.5 ? fromClip : toClip;
+				return true;
+			}
+			//On an end's ramp the plain clip is mixed in, so Mix 0 is not a
+			//copy of anything there; between the ramps it is, as below.
+			if( strength < 1.0f )
+				return false;
+		}
+
 		//Mix at zero is the untouched input -- the filter's Source, or the
 		//transition's outgoing shot, which is what Mix fades against there.
 		if( mix->getValueAtTime( args.time ) <= 0.0 )
 		{
 			identityClip = fromClip;
-			identityTime = args.time;
 			return true;
 		}
 		return false;
@@ -413,8 +553,14 @@ private:
 		return value;
 	}
 
-	frame::Uniforms uniformsAt( double time ) const
+	render::Ends endsAt( double time ) const
 	{
+		return choice( ends, time ) == static_cast< int >( render::Ends::Cut ) ? render::Ends::Cut : render::Ends::Fade;
+	}
+
+	Moment momentAt( double time ) const
+	{
+		Moment m;
 		frame::HostValues host;
 		host.type        = static_cast< float >( choice( type, time ) );
 		host.baud        = static_cast< float >( baud->getValueAtTime( time ) );
@@ -442,9 +588,15 @@ private:
 		float effective = 0.0f;
 		if( transition )
 		{
-			//The host's position IS the tape. Clamped, never wrapped: the last
-			//frame of a transition is a whole tape, not the start of another.
-			effective = std::clamp( static_cast< float >( position->getValueAtTime( time ) ), 0.0f, 1.0f );
+			//The host's position is the tape -- all of it under Cut, the middle
+			//of it under Fade, whose ends are crossfades with the plain clips.
+			//Clamped, never wrapped: the load ends on a whole tape.
+			const double t            = position->getValueAtTime( time );
+			const render::Ends option = endsAt( time );
+			const double length       = endLength->getValueAtTime( time );
+			effective                 = render::TransitionProgress( t, option, length );
+			m.strength                = render::EffectStrength( t, option, length );
+			m.plainIsFrom             = t < 0.5;
 		}
 		else
 		{
@@ -455,17 +607,18 @@ private:
 			                    : std::clamp( host.progress, 0.0f, 1.0f );
 		}
 
-		return frame::Prepare( host, effective, seconds );
+		m.uniforms = frame::Prepare( host, effective, seconds );
+		return m;
 	}
 
 	template< class Processor >
-	void run( const OFX::RenderArguments& args, OFX::Image* dst, const frame::Uniforms& u,
-	          const render::Raster& raster, const render::Attributes& attributes,
-	          const render::View& underlay, const OfxRectI& bounds, bool outPremultiplied )
+	void run( const OFX::RenderArguments& args, OFX::Image* dst, const Moment& m, const render::Raster& raster,
+	          const render::Attributes& attributes, const render::View& underlay, const render::View& plain,
+	          const OfxRectI& bounds, bool outPremultiplied )
 	{
 		Processor processor( *this );
 		processor.setDstImg( dst );
-		processor.setup( u, raster, attributes, underlay, bounds, outPremultiplied );
+		processor.setup( m, raster, attributes, underlay, plain, bounds, outPremultiplied );
 		processor.setRenderWindow( args.renderWindow );
 		processor.process();
 	}
@@ -477,6 +630,8 @@ private:
 	OFX::Clip* toClip   = nullptr;///< the filter's Source, or SourceTo
 
 	OFX::DoubleParam* position    = nullptr;///< the transition's own, in that context only
+	OFX::ChoiceParam* ends        = nullptr;///< ditto
+	OFX::DoubleParam* endLength   = nullptr;///< ditto
 	OFX::DoubleParam* progress    = nullptr;///< the filter's, in that context only
 	OFX::ChoiceParam* sync        = nullptr;///< ditto
 	OFX::ChoiceParam* type        = nullptr;
@@ -722,6 +877,39 @@ void PilotPluginFactory::describeInContext( OFX::ImageEffectDescriptor& desc, OF
 	// In a transition the outgoing shot is only ever seen through Clip, so that
 	// is where the transition starts. The filter keeps the FFGL build's Paper.
 	backgroundParam->setDefault( transition ? frame::kBackgroundClip : choiceIndex( defaults.background ) );
+
+	//------------------------------------------------------------------- Ends
+	// The transition only, and after everything else so that nothing declared
+	// before it moves. Names, options and defaults are lenticular's.
+	if( transition )
+	{
+		OFX::GroupParamDescriptor* endsGroup = defineGroup( desc, page, "Ends" );
+
+		OFX::ChoiceParamDescriptor* endsParam = defineChoice(
+			desc, page, endsGroup, kParamEnds, "Ends",
+			"Fade: the transition starts on exactly the outgoing clip and finishes on exactly the incoming "
+			"one. It fades into the empty screen and its border over the first End Length, loads the tape "
+			"over the middle, and fades from the loaded screen to the incoming clip over the last. Cut: the "
+			"raw load over the whole transition, cutting into the border and out of the Spectrum screen." );
+		endsParam->appendOption( "Fade" );//render::Ends::Fade, 0
+		endsParam->appendOption( "Cut" ); //render::Ends::Cut, 1
+		endsParam->setDefault( static_cast< int >( render::Ends::Fade ) );
+		endsParam->setAnimates( false );
+
+		OFX::DoubleParamDescriptor* lengthParam = desc.defineDoubleParam( kParamEndLength );
+		lengthParam->setLabels( "End Length", "End Length", "End Length" );
+		lengthParam->setHint( "How long each end's fade lasts, as a fraction of the transition: 0.15 is the first "
+		                      "and the last 15%, and the tape loads in the 70% between. Up to 0.5, where the two "
+		                      "meet and the load happens at the midpoint. Ignored under Cut." );
+		lengthParam->setRange( 0.0, static_cast< double >( render::kEndLengthMax ) );
+		lengthParam->setDisplayRange( 0.0, static_cast< double >( render::kEndLengthMax ) );
+		lengthParam->setDefault( static_cast< double >( render::kEndLengthDefault ) );
+		lengthParam->setIncrement( 0.01 );
+		lengthParam->setDoubleType( OFX::eDoubleTypePlain );
+		lengthParam->setAnimates( false );
+		lengthParam->setParent( *endsGroup );
+		page->addChild( *lengthParam );
+	}
 
 	// The Stoatworks About block: a read-only credit line and one push button per
 	// link, in a group that starts folded. Last, so it sits under the effect's

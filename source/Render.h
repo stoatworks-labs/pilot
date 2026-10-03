@@ -166,18 +166,70 @@ void ComposeRow( const frame::Uniforms& u, const Raster& raster, const Attribute
 /// against the GPU; the plugin itself splits the work.
 void Frame( const frame::Uniforms& u, const View& picture, const View& underlay, int outW, int outH, float* out );
 
+//---------------------------------------------------------------------------
+// The transition's ends. OpenFX only: FFGL has no transition to give ends to.
+//
+// The tape alone does not start on the outgoing shot -- its first frame
+// already has the pilot-tone border round it -- and does not finish on the
+// incoming one: its last frame is the loaded Spectrum screen. On an NLE
+// timeline both read as a glitch, a cut into the effect and a cut out of it.
+// So the transition has Ends:
+//
+//   Fade  (the default) the tape runs over the middle of the transition, and
+//         over the first and last End Length the picture crossfades -- a
+//         smoothstep in premultiplied colour -- from exactly SourceFrom into
+//         the effect at progress 0, and from the loaded screen into exactly
+//         SourceTo. Transition 0 is SourceFrom and 1 is SourceTo.
+//   Cut   the tape over the whole transition, nothing else: the raw load, as
+//         the first OpenFX build had it, bit for bit.
+//
+// The same shape, the same names and the same defaults as lenticular's.
+//---------------------------------------------------------------------------
+enum class Ends
+{
+	Fade = 0,
+	Cut  = 1,
+};
+
+constexpr float kEndLengthDefault = 0.15f;
+constexpr float kEndLengthMax     = 0.5f;
+
+/**
+	Where the tape is at Transition value `transition`.
+
+	Cut: the value itself, clamped. Fade: clamp( ( T - L ) / ( 1 - 2L ), 0, 1 ),
+	so the load starts as the first ramp ends and is complete at T = 1 - L. At
+	L = 0.5 the load takes no time at all and the screen goes from empty to
+	loaded at T = 0.5. Arithmetic in double, from the host's double values.
+*/
+float TransitionProgress( double transition, Ends ends, double endLength );
+
+/**
+	How much of the effect is seen, against the plain clip, at `transition`:
+	1 under Cut, and between Fade's ramps; over a ramp, a smoothstep of the
+	distance to the nearer end, 0 at the end itself and 1 a whole End Length
+	in, with zero slope at both. The plain clip is SourceFrom in the first half
+	of the transition and SourceTo in the second.
+*/
+float EffectStrength( double transition, Ends ends, double endLength );
+
+/// The plain clip for output pixels [x0, x1) of row `y`, as premultiplied
+/// float RGBA -- the underlay's own fetch in ComposeRow, by itself.
+void PlainRow( const View& image, int outW, int outH, int y, int x0, int x1, float* out );
+
 /**
 	The OpenFX transition, as one pure function of its inputs:
 
-	    (from, to, transition, time, controls) -> out
+	    (from, to, transition, time, controls, ends) -> out
 
 	`to` is the picture being loaded; `from` is what was on screen before it,
 	which Background = Clip shows through every address that has not arrived
-	and Mix fades against. `transition` IS the Progress control, 0..1 and
-	clamped rather than wrapped, so the last frame of a transition is a whole
-	tape and not the start of the next one.
+	and Mix fades against. The tape's position comes from `transition` by
+	TransitionProgress -- clamped, never wrapped, so the load ends on a whole
+	tape -- and under Fade the result is crossfaded with the plain clip by
+	EffectStrength.
 */
-void Transition( const View& from, const View& to, float transition, double seconds,
-                 const frame::HostValues& controls, int outW, int outH, float* out );
+void Transition( const View& from, const View& to, double transition, double seconds,
+                 const frame::HostValues& controls, Ends ends, double endLength, int outW, int outH, float* out );
 
 } // namespace pilot::render

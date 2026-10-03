@@ -2491,9 +2491,9 @@ int transitionAt( int w, int h )
 
 		std::vector< float > out( static_cast< size_t >( w ) * h * 4 );
 		if( swap )
-			render::Transition( toView, fromView, position, seconds, controls, w, h, out.data() );
+			render::Transition( toView, fromView, position, seconds, controls, render::Ends::Cut, 0.0, w, h, out.data() );
 		else
-			render::Transition( fromView, toView, position, seconds, controls, w, h, out.data() );
+			render::Transition( fromView, toView, position, seconds, controls, render::Ends::Cut, 0.0, w, h, out.data() );
 		const Image cpu = fromFloat( out, w, h );
 
 		for( size_t p = 0, k = 0; p + 3 < expected.px.size(); p += 4, ++k )
@@ -2539,7 +2539,7 @@ int transitionAt( int w, int h )
 		bare.background = float( Pilot::kBackgroundClip );
 		bare.borderOn   = 0.0f;
 		std::vector< float > first( static_cast< size_t >( w ) * h * 4 );
-		render::Transition( fromView, toView, 0.0f, 0.5, bare, w, h, first.data() );
+		render::Transition( fromView, toView, 0.0, 0.5, bare, render::Ends::Cut, 0.0, w, h, first.data() );
 		const Image firstImage = fromFloat( first, w, h );
 
 		long long rowsNotFrom = 0;
@@ -2550,6 +2550,103 @@ int transitionAt( int w, int h )
 				++rowsNotFrom;
 		}
 		Check( rowsNotFrom == 0, "  Transition 0 with no border is the outgoing shot, byte for byte" );
+	}
+
+	//-------------------------------------------------------- Fade, the ends
+	// Ends = Fade, the default, against Cut -- which is what everything above
+	// holds to the GPU. Fade's two numbers are worked out here from the
+	// formulas, not by calling render::TransitionProgress or EffectStrength:
+	//   progress = clamp( ( T - L ) / ( 1 - 2L ), 0, 1 )
+	//   s        = smoothstep of min( T, 1 - T ) / L, 1 beyond L
+	// and the frame must be:
+	//   - at T = 0 and 1, SourceFrom and SourceTo, byte for byte;
+	//   - on a ramp, ( 1 - s ) plain + s Cut-at-progress, within one level;
+	//   - between the ramps, Cut at progress, byte for byte;
+	//   - at L = 0, Cut over the whole range with the plain clips at the ends.
+	// The control puts the wrong plain clip into the ramp's expectation.
+	{
+		frame::HostValues controls;
+		controls.background = float( Pilot::kBackgroundClip );
+		const double seconds = 1.3;
+
+		const auto transitionImage = [ & ]( double t, render::Ends ends, double length ) {
+			std::vector< float > out( static_cast< size_t >( w ) * h * 4 );
+			render::Transition( fromView, toView, t, seconds, controls, ends, length, w, h, out.data() );
+			return fromFloat( out, w, h );
+		};
+		const auto progressOf = []( double t, double length ) {
+			return std::clamp( ( t - length ) / ( 1.0 - 2.0 * length ), 0.0, 1.0 );
+		};
+		const auto strengthOf = []( double t, double length ) {
+			const double edge = std::min( t, 1.0 - t );
+			if( edge >= length )
+				return 1.0;
+			const double x = edge / length;
+			return x * x * ( 3.0 - 2.0 * x );
+		};
+		//A test picture (bottom row first) as an Image (top row first).
+		const auto imageOf = [ & ]( const std::vector< unsigned char >& picture ) {
+			Image img;
+			img.w = w;
+			img.h = h;
+			img.px.resize( picture.size() );
+			for( int y = 0; y < h; ++y )
+				std::memcpy( img.px.data() + static_cast< size_t >( y ) * w * 4,
+				             picture.data() + static_cast< size_t >( h - 1 - y ) * w * 4, static_cast< size_t >( w ) * 4 );
+			return img;
+		};
+		const Image fromImage = imageOf( from );
+		const Image toImage   = imageOf( to );
+		const double L        = render::kEndLengthDefault;
+
+		Check( transitionImage( 0.0, render::Ends::Fade, L ).px == fromImage.px, "  Fade: Transition 0 is SourceFrom, byte for byte" );
+		Check( transitionImage( 1.0, render::Ends::Fade, L ).px == toImage.px, "  Fade: Transition 1 is SourceTo, byte for byte" );
+
+		//The ramp, against ( 1 - s ) plain + s Cut-at-progress.
+		const auto rampAgainst = [ & ]( double t, const Image& plain ) {
+			const double s   = strengthOf( t, L );
+			const Image fade = transitionImage( t, render::Ends::Fade, L );
+			const Image cut  = transitionImage( progressOf( t, L ), render::Ends::Cut, 0.0 );
+			FrameDiff d;
+			for( size_t k = 0; k < fade.px.size(); ++k )
+			{
+				const double want = ( 1.0 - s ) * plain.px[ k ] + s * cut.px[ k ];
+				const int off     = static_cast< int >( std::lround( std::fabs( fade.px[ k ] - want ) ) );
+				d.worst           = std::max( d.worst, off );
+				d.pixels += off > 1 ? 1 : 0;//channel values, not pixels
+			}
+			return std::make_pair( s, d );
+		};
+		for( const double t : { 0.04, 0.1, 0.9, 0.96 } )
+		{
+			const auto r = rampAgainst( t, t < 0.5 ? fromImage : toImage );
+			char what[ 128 ];
+			std::snprintf( what, sizeof( what ), "  Fade: Transition %.2f, s %.3f, is ( 1 - s ) plain + s Cut-at-progress (worst %d of 255)",
+			               t, r.first, r.second.worst );
+			Check( r.second.worst <= 1, what );
+		}
+
+		//Between the ramps: Cut at the remapped progress, exactly.
+		for( const double t : { 0.2, 0.5, 0.8 } )
+		{
+			char what[ 96 ];
+			std::snprintf( what, sizeof( what ), "  Fade: Transition %.2f is Cut at progress %.4f, byte for byte", t, progressOf( t, L ) );
+			Check( transitionImage( t, render::Ends::Fade, L ).px == transitionImage( progressOf( t, L ), render::Ends::Cut, 0.0 ).px, what );
+		}
+
+		//End Length 0: Cut over the whole range, and still the clips at the ends.
+		Check( transitionImage( 0.3, render::Ends::Fade, 0.0 ).px == transitionImage( 0.3, render::Ends::Cut, 0.0 ).px,
+		       "  Fade at End Length 0: Transition 0.30 is Cut at 0.30" );
+		Check( transitionImage( 0.0, render::Ends::Fade, 0.0 ).px == fromImage.px
+		           && transitionImage( 1.0, render::Ends::Fade, 0.0 ).px == toImage.px,
+		       "  Fade at End Length 0: the ends are still the clips" );
+
+		//The control: the late ramp checked against the outgoing clip.
+		const auto wrong = rampAgainst( 0.96, fromImage );
+		char what[ 128 ];
+		std::snprintf( what, sizeof( what ), "  control: the late ramp against the wrong plain clip misses (%lld channel values out by more than one level)",
+		               wrong.second.pixels );
+		Check( wrong.second.pixels > static_cast< long long >( w ) * h * 4 / 100, what );
 	}
 
 	//The control.
