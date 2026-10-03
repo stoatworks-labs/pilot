@@ -137,14 +137,26 @@ Linux    /usr/OFX/Plugins/
 It appears as **Pilot**, under **Stoatworks**, with the same four groups.
 
 **As an effect**, keyframe Progress, or set Sync to Clip time and the tape runs at
-the baud rate. **As a transition**, the transition's own position is Progress:
-the incoming shot (SourceTo) is what loads, and the outgoing one (SourceFrom)
-shows through every address that has not arrived yet — Background defaults to
-**Clip** there, because under Paper the outgoing shot would never appear — and is
-what Mix fades against. The first frame already has the pilot-tone border round
-the outgoing shot (Border Off makes it the outgoing shot exactly), and the last
-frame is the loaded Spectrum screen, after which the edit cuts to the real
-picture: that is the effect, and at Progress 1 Resolume shows the same screen.
+the baud rate. **As a transition**, the transition's own position drives the
+tape: the incoming shot (SourceTo) is what loads, and the outgoing one
+(SourceFrom) shows through every address that has not arrived yet — Background
+defaults to **Clip** there, because under Paper the outgoing shot would never
+appear — and is what Mix fades against.
+
+The transition has an **Ends** group of its own (the filter does not):
+
+- **Fade** (the default) starts on exactly the outgoing clip and finishes on
+  exactly the incoming one. Over the first **End Length** (0.15 of the
+  transition by default) it crossfades from the outgoing clip into the empty
+  screen and its striped border; the tape loads over the middle, complete at
+  1 − End Length; and over the last End Length it crossfades from the loaded
+  Spectrum screen into the incoming clip. The crossfades are smoothsteps, in
+  premultiplied colour. End Length runs to 0.5, where the load happens at the
+  midpoint; at 0 the tape fills the whole transition and only the first and
+  last frames are the clips.
+- **Cut** is the raw load over the whole transition, as Resolume would show it:
+  the first frame already has the border, and the last is the Spectrum screen,
+  after which the edit cuts to the real picture.
 
 What is different from the Resolume build, and why:
 
@@ -154,8 +166,9 @@ What is different from the Resolume build, and why:
   positions in the menu. Clip time runs on the host's timeline — the OFX time, in
   frames, over the output frame rate — so any frame renders the same however the
   host reaches it, out of order or alone.
-- **The transition is new.** In it, Progress and Sync are not shown (the host
-  owns the position), and Background defaults to Clip, as above.
+- **The transition is new**, and so are its Ends. In it, Progress and Sync are
+  not shown (the host owns the position), and Background defaults to Clip, as
+  above.
 - **CPU, not GPU.** 4.6–5.9 ms a frame at 1920×1080 on an M4 Max's 16 threads,
   35 ms on one; the Resolume build is 0.2 ms on its GPU. 8-bit, 16-bit and float
   images, RGBA or RGB, premultiplied or not. In a float host the clip that
@@ -179,10 +192,13 @@ What is different from the Resolume build, and why:
 **Verified:** the bundle loads in an OpenFX test host (an extended `ofxprobe`),
 lists the Filter, General and Transition contexts, and renders as a filter and
 as a transition: byte-identical to the harness's CPU path in twelve filter
-configurations at two sizes and at six transition positions at two Mix settings;
-frame 30 rendered alone is byte-identical to frame 30
-after frames 0–29; float and 8-bit images give the same frame; Mix 0 is the
-input exactly, as an identity. The Windows and Linux builds are compiled by CI
+configurations at two sizes and, under Cut, at six transition positions at two
+Mix settings; frame 30 rendered alone is byte-identical to frame 30 after frames
+0–29; float and 8-bit images give the same frame; Mix 0 is the input exactly, as
+an identity. Under Fade, Transition 0 and 1 are SourceFrom and SourceTo byte for
+byte, rendered and as an identity, in 8-bit and float; on the ramps the frame is
+within one level of ( 1 − s ) plain + s · Cut at the remapped progress; and
+between them it is that Cut, byte for byte. The Windows and Linux builds are compiled by CI
 and the Linux one is load-tested on Rocky 8. **Not verified:** it has never been
 loaded into DaVinci Resolve, Vegas, Nuke or Natron, so how its controls present
 there, and whether a host offers the Transition context where expected, is

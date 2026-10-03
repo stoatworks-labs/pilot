@@ -366,6 +366,10 @@ missing float-ambiguity window, the sweep's impossible floor for `Message On`, a
 | 59 | `--transition` | `render::Transition` against the transition the GPU's Paper and Black frames imply, six fader positions × Mix 1 and 0.6 | **0 unexplained** | a pixel may differ only where line 56 explained a difference in one of the two GPU frames it was built from. Measured 0 of up to 231 at 1920×1080 | **yes** | **yes — two rasters** |
 | 60 | `--transition` first frame | Transition 0 with Border Off is SourceFrom | **none** — byte-identical | nothing has arrived and Background = Clip shows the outgoing shot; Mix at 1 is `clip*0 + clip*1`, exact | no | **yes** |
 | 61 | `--transition` control | SourceFrom and SourceTo swapped | **> 1% unexplained** | the negative control for line 59. Measured 1,076,067 of 2,073,600 (52%) | **yes** | **yes** |
+| 61a | `--transition` Fade ends | Transition 0 and 1 under Fade are SourceFrom and SourceTo | **none** — byte-identical | the plain clip's own texels, read and written back: `k/255` and back to `k` is exact | no | **yes** |
+| 61b | `--transition` Fade ramps | at 0.04, 0.1, 0.9, 0.96: ( 1 − s ) plain + s · Cut-at-progress, s and progress from the formulas | **1 level** | the expectation is built from two eight-bit frames, the render from floats; one level is the rounding of that difference. Measured 0 | no | **yes** |
+| 61c | `--transition` Fade middle | at 0.2, 0.5, 0.8, and at End Length 0: Cut at the remapped progress | **none** — byte-identical | the same uniforms reach the same code | no | **yes** |
+| 61d | `--transition` Fade control | the late ramp against the wrong plain clip | **> 1% of values out** | the negative control for 61b. Measured 6.2 million channel values out at 1920×1080 | no | **yes** |
 | 62 | `--cpu-bench` | Render.cpp's ms/frame, threaded and single | **not pass/fail** | as line 53, for the CPU | no | yes, by construction |
 
 Two things the table does not contain, and the absence is deliberate:
@@ -594,19 +598,44 @@ plugin description says the other two are FFGL-only.
 
 **The transition.** Declared in the same plugin as the Filter and General
 contexts. SourceTo is the picture that loads, the host's `Transition` parameter
-is Progress (clamped, not wrapped, so the last frame is a whole tape), and
+drives Progress (clamped, not wrapped, so the load ends on a whole tape), and
 SourceFrom takes the one role the compose pass gives the clip a second time:
 what Background = Clip shows through an address that has not arrived, and what
 Mix fades against. In the filter both roles are the Source, so the transition is
 one substitution in one function (`render::Transition`), not a second renderer —
 which is why it was taken rather than declined. In the transition context
 Progress and Sync are not declared, and Background defaults to Clip, because
-under Paper the outgoing shot would never be seen. The endpoints are not the two
-clips: the first frame has the pilot-tone border round the outgoing shot (Border
-Off makes it exactly the outgoing shot), and the last is the loaded Spectrum
-screen, after which the edit cuts to the real picture. That is the effect — at
-Progress 1 the FFGL build shows the same screen — and the description says so.
-`isIdentity` at Mix 0 returns the Source, or SourceFrom.
+under Paper the outgoing shot would never be seen. `isIdentity` at Mix 0
+returns the Source, or SourceFrom (between the Fade ramps, below).
+
+**The transition's ends** (added at the lead's request, 2026-10-03, matching
+lenticular). The tape alone does not start on SourceFrom — its first frame
+already has the pilot-tone border — or finish on SourceTo: its last is the
+loaded Spectrum screen, and the edit then cuts to the real picture. On an NLE
+timeline both read as glitches. So the transition context, and only it, declares
+two more parameters after everything else (ids are permanent; the names,
+options and defaults are lenticular's):
+
+- `ends` (choice): **Fade** = 0, the default, or **Cut** = 1. Cut is the first
+  OpenFX transition bit for bit — the raw load over the whole range — and
+  renders byte-identically to it (12 of 12 host renders from before the change).
+- `endLength` (double 0..0.5, default 0.15, not animatable): the fraction of the
+  transition each end ramp takes.
+
+Under Fade the tape runs over the middle, progress = clamp( ( T − L ) / ( 1 − 2L ),
+0, 1 ), so the load completes at T = 1 − L; over the first L the picture
+crossfades from plain SourceFrom into the effect at progress 0 (the border, and
+the outgoing shot through the unloaded addresses), and over the last L from the
+loaded screen into plain SourceTo — a smoothstep weight, zero slope at both ends
+of a ramp, in premultiplied colour. T = 0 and T = 1 are the clips exactly, twice
+over: `isIdentity` names the clip, and a render asked anyway copies the clip's
+pixels in its own format when it shares the output's bounds, depth, components
+and premultiplication. L = 0.5 leaves the load no time: the screen goes from
+empty to loaded at T = 0.5. L = 0 is the load over the whole range with exact
+copies at the two end frames. The arithmetic is `render::TransitionProgress` and
+`render::EffectStrength` (Render.cpp), and `render::Transition` — the pure
+function the harness checks — uses it. The Filter context is untouched: its 62
+host renders are byte-identical to before.
 
 **Verified** (M4 Max, in an extended build of resolume-ofx-bridge's `ofxprobe`
 that hosts the Transition context and takes input images and a render time; the
@@ -614,7 +643,7 @@ stock probe instantiates the Filter context only, on its own ramp, at time 0):
 
 - The bundle's frame is **byte-identical** to `pttest --pipe --via-cpu` (Render.cpp
   in the harness) in twelve filter configurations at 1920×1080 and at 640×480,
-  and in the transition at six positions × two Mix at 1920×1080 against the
+  and, under Cut, in the transition at six positions × two Mix at 1920×1080 against the
   composite the CPU's own Paper/Black frames imply. So the marshalling adds
   nothing, and what `--cpu` and `--transition` say about Render.cpp holds for the
   bundle.
@@ -628,10 +657,23 @@ stock probe instantiates the Filter context only, on its own ramp, at time 0):
   one instance (Sync = Clip time); frame 0 differs from it by 1.8% of the frame,
   so the comparison can fail.
 - Float images give the same frame as 8-bit ones (two configurations).
-- Transition 1 equals the filter at Progress 1; Transition 0 with Border Off is
-  SourceFrom; Mix 0 through `isIdentity` is the input, both contexts.
-- 1920×1080 costs 5.9 ms a frame through the test host's thread suite, and
-  4.6 ms on 16 threads / 35 ms on one in `pttest --cpu-bench`.
+- Under Cut, Transition 1 equals the filter at Progress 1; Transition 0 with
+  Border Off is SourceFrom; Mix 0 through `isIdentity` is the input, both
+  contexts. Cut renders byte-identically to the transition from before Ends
+  existed (12 of 12).
+- Under Fade (End Length 0.15): Transition 0 and 1 are SourceFrom and SourceTo
+  byte for byte, rendered and through `isIdentity`, in 8-bit and float (8 of 8);
+  at Transition 0.04, 0.1, 0.9 and 0.96 the frame is within one level of
+  ( 1 − s ) plain + s · Cut at the remapped progress, in 8-bit and float, with
+  s worked out from the formula, not the plugin; at 0.2, 0.5 and 0.8 it is that
+  Cut byte for byte; End Length 0 at 0.3 is Cut at 0.3. The control — the late
+  ramp held to the wrong plain clip — misses by 211 levels across the frame.
+  `pttest --transition` makes the same checks host-free, on both renderers, and
+  `verify.sh` makes them through the host when `OFXPROBE` names one that can host
+  a Transition.
+- 1920×1080 costs 5.9–7.0 ms a frame through the test host's thread suite
+  (6.3 ms on a Fade ramp, which renders the plain clip as well), and 4.6 ms on
+  16 threads / 35 ms on one in `pttest --cpu-bench`.
 
 **Not verified:** never loaded into DaVinci Resolve, Vegas, Nuke or Natron — how
 the controls present, whether Resolve lists the transition, and how a real host

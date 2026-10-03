@@ -297,7 +297,8 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
 - **No factory presets.**
 - **The OpenFX build has never been run in Resolve**, Vegas, Nuke or Natron —
   only in a command-line test host. How its controls present there, and how a
-  host offers the transition, are untested. It has no Beat or Bar sync.
+  host offers the transition and its Ends, are untested. It has no Beat or Bar
+  sync.
 - **There is a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
   It is a port to a web page, not the plugin: the shaders run in WebGL2 and any CPU
   half is rewritten in JavaScript. The page lists what it does not reproduce.
@@ -324,15 +325,27 @@ places:
 - **As an effect** on a clip, with the controls this guide describes. Progress
   is keyframeable; **Sync** offers **Manual** and **Clip time**, where the tape
   runs at the baud rate along the timeline and loops.
-- **As a transition** between two clips. The transition's own position is the
-  tape: the incoming clip is the picture that loads, and the outgoing clip is
-  what every address that has not arrived yet shows. **Background** starts on
+- **As a transition** between two clips. The transition's own position drives
+  the tape: the incoming clip is the picture that loads, and the outgoing clip
+  is what every address that has not arrived yet shows. **Background** starts on
   **Clip** here — choose Paper for a machine's blank screen instead — and
   **Mix** fades the load against the outgoing clip. There is no Progress or
-  Sync, because the transition is the clock. The border is there from the first
-  frame (turn **Border On** off for a first frame that is exactly the outgoing
-  clip), and the last frame is the fully loaded Spectrum screen, after which the
-  edit cuts to the real incoming picture.
+  Sync, because the transition is the clock.
+
+The transition has one more group, **Ends**, which decides how it starts and
+finishes:
+
+- **Fade** (the default) — the transition starts on exactly the outgoing clip
+  and finishes on exactly the incoming one, so it sits on a timeline without a
+  jump at either edit. Over the first **End Length** it fades from the outgoing
+  clip into the empty Spectrum screen and its striped border; the tape loads in
+  the middle; and over the last End Length it fades from the loaded screen into
+  the incoming clip. End Length is 0.15 by default — the first and last 15% —
+  and goes up to 0.5, where the load happens all at once at the midpoint.
+- **Cut** — the raw load, from the first frame to the last, as Resolume shows
+  it: the border is there from the very first frame, and the last frame is the
+  fully loaded Spectrum screen, after which the edit cuts to the real incoming
+  picture.
 
 What the OpenFX build does not have:
 

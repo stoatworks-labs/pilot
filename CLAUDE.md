@@ -51,7 +51,8 @@ in `Loader.cpp`.
   - `PTTEST_SOFTWARE=1 ./build/pttest --cpu` — the same on Apple's software
     renderer, which is what CI's GPU-less runner gets; it needs ties the M4 does not
   - `./build/pttest --transition` — `render::Transition` against the transition the
-    GPU's own Paper/Black frames imply, six positions × two Mix
+    GPU's own Paper/Black frames imply, six positions × two Mix (Ends = Cut); then
+    Ends = Fade against Cut: exact ends, the ramps' crossfade, the middle
   - `./build/pttest --cpu-bench` — its cost, threaded and not
   - `./build/pttest --pipe --via-cpu ...` — `--pipe` through Render.cpp instead
 - `python3 tools/sweep.py` — no dead controls (`--size WxH`, `--frames N`)
@@ -65,6 +66,12 @@ in `Loader.cpp`.
 - **The three shaders are mirrored in `Render.cpp`**, marked `//= mirrored:` on both
   sides (outside the GLSL raw strings, because `demo/plugin.js` carries those
   character for character). Edit both, then run `pttest --cpu --transition`.
+- **The transition has Ends** (OpenFX only, transition context only): `ends` Fade
+  (default) / Cut, `endLength` 0..0.5 (0.15). Fade starts on exactly SourceFrom and
+  ends on exactly SourceTo; Cut is the raw load. `render::TransitionProgress` and
+  `render::EffectStrength`; the filter never sees them. Names match lenticular's.
+- `OFXPROBE=<an ofxprobe with --context> tools/verify.sh` also renders the
+  transition through the host; the stock probe skips that step.
 - **The RGBA16F threshold is rounded toward zero** in `render::Half`, because the M4
   Max's GL does exactly that (`pttest --cpu` reads the GPU's cells back). OpenGL
   leaves it to the implementation; the check accepts one half-float step up too.
