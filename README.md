@@ -2,8 +2,10 @@
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. **It has never been loaded
-> into Resolume on macOS** (see [Status](#status) for Windows). Everything below is measured offline, through the real plugin
-> class in a headless GL context: the address order exists twice — as the bit
+> into Resolume on macOS** (see [Status](#status) for Windows), and **the OpenFX
+> build has never been loaded into DaVinci Resolve or any other real OpenFX host**.
+> Everything below is measured offline, through the real plugin class in a
+> headless GL context: the address order exists twice — as the bit
 > layout and as a plain nested loop — and `pttest --agree` proves the two agree for
 > all 6144 addresses bitwise; `pttest --reveal` renders through the shipping shader
 > and checks all 49,152 pixels against the independently written table, at two
@@ -13,9 +15,10 @@
 > control sweep fails if any parameter turns out to do nothing (see
 > [Building and testing](#building-and-testing)).
 
-A tape loader for Resolume Arena/Avenue, as an FFGL effect. The clip arrives the
-way a ZX Spectrum loaded it: **in screen-memory order, at the baud rate, with the
-border painted by the loading signal itself.**
+A tape loader for Resolume Arena/Avenue, as an FFGL effect — and for DaVinci
+Resolve, Vegas, Nuke and Natron as an OpenFX effect **and transition**. The clip
+arrives the way a ZX Spectrum loaded it: **in screen-memory order, at the baud
+rate, with the border painted by the loading signal itself.**
 
 Most reveal transitions are a shape moving across a frame — a wipe, a circle, a
 slab of noise. This one is not a shape at all. It is an **address order**: the
@@ -109,6 +112,83 @@ Resolume's bundled demo media.*
   shows. Paper is what a real machine shows; Clip turns the whole thing into a
   colour-and-quantise transition over the live picture.
 
+## OpenFX — Resolve, Vegas, Nuke, Natron
+
+The same effect also builds as an OpenFX plugin, for DaVinci Resolve (Edit and
+Color pages, and Fusion), Vegas Pro, Nuke and Natron — and there it is two
+things: an **effect**, as in Resolume, and a **transition**, which is what Pilot
+is in practice and what an FFGL effect cannot be. It renders on the CPU.
+Everything that is not per-pixel is the Resolume build's own code — the address
+order, the tape and its failures, the machines, the controls and every value the
+shaders are handed — and the three shaders are copied into C++ statement for
+statement (`source/Render.cpp`, marked `//= mirrored:` in both places).
+
+The OpenFX zips — `pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip`
+and `pilot-ofx-linux-x86_64.zip` — ship from the release after v0.1.0, which has
+none; until then, build it (below). Copy `Pilot.ofx.bundle` into the standard
+OpenFX folder and restart the host:
+
+```
+macOS    /Library/OFX/Plugins/
+Windows  C:\Program Files\Common Files\OFX\Plugins\
+Linux    /usr/OFX/Plugins/
+```
+
+It appears as **Pilot**, under **Stoatworks**, with the same four groups.
+
+**As an effect**, keyframe Progress, or set Sync to Clip time and the tape runs at
+the baud rate. **As a transition**, the transition's own position is Progress:
+the incoming shot (SourceTo) is what loads, and the outgoing one (SourceFrom)
+shows through every address that has not arrived yet — Background defaults to
+**Clip** there, because under Paper the outgoing shot would never appear — and is
+what Mix fades against. The first frame already has the pilot-tone border round
+the outgoing shot (Border Off makes it the outgoing shot exactly), and the last
+frame is the loaded Spectrum screen, after which the edit cuts to the real
+picture: that is the effect, and at Progress 1 Resolume shows the same screen.
+
+What is different from the Resolume build, and why:
+
+- **No Beat or Bar sync.** An OpenFX host gives a plugin no tempo and no bar
+  position, so those two Sync modes are absent rather than present and dead (the
+  plugin description says so). Manual and Clip time are there, at the same
+  positions in the menu. Clip time runs on the host's timeline — the OFX time, in
+  frames, over the output frame rate — so any frame renders the same however the
+  host reaches it, out of order or alone.
+- **The transition is new.** In it, Progress and Sync are not shown (the host
+  owns the position), and Background defaults to Clip, as above.
+- **CPU, not GPU.** 4.6–5.9 ms a frame at 1920×1080 on an M4 Max's 16 threads,
+  35 ms on one; the Resolume build is 0.2 ms on its GPU. 8-bit, 16-bit and float
+  images, RGBA or RGB, premultiplied or not. In a float host the clip that
+  Background = Clip and Mix show is not clamped to 0..1; the Spectrum side is
+  quantised to eight bits first, as the GPU's own raster buffer does.
+- **Not bit-identical to the GPU, and every difference accounted for.** The
+  picture is fifteen colours, so a disagreement is never a small error: it is a
+  whole neighbouring colour. On the harness's test card at 1920×1080, between 0
+  and 325 of the 2,073,600 pixels (at most 0.016%) differ by more than one level
+  in eleven configurations, and 9,081 (0.44%) in a twelfth built to put
+  border-stripe edges exactly on pixel centres; at Mix 0.5 another 8.5% differ
+  by exactly one level, the eight-bit rounding of a half-way mix. `pttest --cpu`
+  traces every pixel that differs by more to one of two causes — a decision
+  sitting exactly on its edge, where the GPU's own rounding falls the other way
+  (a pixel centre on the line between two Spectrum pixels or two stripes, a luma
+  on its cell's threshold, a mean colour of exactly half a level), or a raster
+  byte the GPU's texture filter left one level from the CPU's — and fails on any
+  it cannot. It holds on the M4 Max's GPU and on Apple's software renderer, which
+  CI runs it on.
+
+**Verified:** the bundle loads in an OpenFX test host (an extended `ofxprobe`),
+lists the Filter, General and Transition contexts, and renders as a filter and
+as a transition: byte-identical to the harness's CPU path in twelve filter
+configurations at two sizes and at six transition positions at two Mix settings;
+frame 30 rendered alone is byte-identical to frame 30
+after frames 0–29; float and 8-bit images give the same frame; Mix 0 is the
+input exactly, as an identity. The Windows and Linux builds are compiled by CI
+and the Linux one is load-tested on Rocky 8. **Not verified:** it has never been
+loaded into DaVinci Resolve, Vegas, Nuke or Natron, so how its controls present
+there, and whether a host offers the Transition context where expected, is
+untested; the Windows and Linux builds have never rendered a frame; and 16-bit
+images have never been fed to it.
+
 ## Status
 
 **v0.1.0, built 2026-09-22 and released 2026-09-23, and honestly
@@ -142,8 +222,9 @@ checks (`--reveal`, `--pixels`) and the control sweep at 320×180 all passed on
 that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
-Not done, and not pretended otherwise: no OpenFX port, no factory presets, and the
-universal build has never run on an Intel Mac. The
+Not done, and not pretended otherwise: no factory presets, the universal build has
+never run on an Intel Mac, and the OpenFX build has never been inside a real
+OpenFX host (see [above](#openfx--resolve-vegas-nuke-natron)). The
 [browser demo](https://pilot-demo.stoatworks-labs.com) runs the plugin's own raster,
 attribute and compose shaders ported to WebGL2, and `demo/tools/check_shaders.py` holds
 that GLSL character-for-character against `source/shaders/` — but the tape model beside
@@ -165,6 +246,12 @@ universal (arm64 + x86_64); Windows needs GLEW via vcpkg.
 
 Add `-DCMAKE_OSX_ARCHITECTURES=arm64` for a much faster dev build.
 
+`cmake --build build` also produces `build/Pilot.ofx.bundle`, the OpenFX plugin;
+copy it into `/Library/OFX/Plugins` by hand (`cmake --install` does not touch a
+root-owned folder). `-DBUILD_OFX=OFF` leaves it out; `-DPILOT_BUILD_FFGL=OFF`
+builds it alone, with no submodule, no GLEW and no GL — which is how the Linux
+build is made.
+
 The harness renders the real plugin class headlessly. Ten of its twelve check
 groups open **no GL context at all** — they run against the model in
 `source/Spectrum.cpp` and `source/Loader.cpp`, so they cannot be a property of a
@@ -180,6 +267,10 @@ sizes on purpose:
     ./build/pttest --negative                    # break the model; every check must fail
     ./build/pttest --reveal --pixels             # through the real shader, two rasters
     ./build/pttest --bench                       # 720p through 4K
+    ./build/pttest --cpu                         # the OpenFX renderer against the GPU, pixel by pixel
+    ./build/pttest --transition                  # the OpenFX transition against the GPU's own frames
+    ./build/pttest --cpu-bench                   # what the OpenFX renderer costs
+    ./build/pttest --pipe --via-cpu ...          # --pipe, through the OpenFX renderer
     ./build/pttest --pipe --size 1920x1080 --fps 30 --script cues.txt   # raw RGBA in, out: for filming
     python3 tools/sweep.py                       # no control is silently dead
     tools/verify.sh                              # all of it, from a fresh universal build

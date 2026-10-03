@@ -46,6 +46,8 @@ source/Spectrum.{h,cpp}   the address order (twice), the palette. No GL, no FFGL
 source/Loader.{h,cpp}     the tape: progress -> bytes, block failures, border phase.
 source/Machines.{h,cpp}   four loaders as a table: baud, border style, colours.
 source/Controls.h         0..1 host parameters to physical units.
+source/Frame.{h,cpp}      one frame's CPU decisions -> every uniform; the defaults.
+source/Render.{h,cpp}     the three passes again, on the CPU: the OpenFX renderer.
 source/Font.{h,cpp}       graticule's 5x7 glyphs; one string is drawn from them.
 source/Shaders.h          the three passes.
 source/shaders/Raster.cpp   the clip, box-filtered onto 256x192.
@@ -53,13 +55,16 @@ source/shaders/Attr.cpp     one texel per 8x8 cell: ink, paper, bright, threshol
 source/shaders/Compose.cpp  the address order, the reveal, the border, the message.
 source/Pilot.{h,cpp}      the plugin: parameters, the clock, the three passes.
 source/PassBuffer.*       FFGLFBO with the SDK's leaked colour texture fixed.
-tools/pttest/             the offline harness. Twelve check groups; ten need no GL.
+source/ofx/PilotOFX.cpp   the OpenFX plugin: filter and transition. Marshalling only.
+external/openfx/          the OpenFX SDK subset (headers + Support library), vendored.
+tools/pttest/             the offline harness. Fourteen check groups; ten need no GL.
 tools/sweep.py            no control is silently dead.
 tools/verify.sh           all of it, from a fresh universal build.
 ```
 
 **Almost nothing is decided in the shader that could be decided on the CPU.** The
-byte count, the border phase and the error state all arrive as uniforms from
+byte count, the border phase and the error state all arrive as uniforms, worked
+out once per frame by `frame::Prepare` (`Frame.cpp`) from the tape in
 `Loader.cpp`. That is not an optimisation — it is what lets ten of the twelve check
 groups run with no GL context at all, so the claims about the address order, the
 border period and the error rate cannot be a property of a rasteriser or of a
@@ -199,6 +204,68 @@ the screen and 1.5% of the frame, and only about a third of that box differs fro
 what was underneath. `sweep.py` gives it a floor of 0.1% — a third of what it does
 move, a hundred times what a dead control would — with the arithmetic written out.
 
+**The GPU rounds the RGBA16F threshold toward zero, not to nearest.** The first
+CPU copy of the attribute pass rounded to nearest even, as any float-to-half
+routine does by default, and `pttest --cpu` found 380 of 768 cells disagreeing
+with the GPU's at 640×480 — every one with the same ink, paper and BRIGHT, and
+a threshold exactly one half-float step higher than the GPU's. Fed the GPU's
+own raster, truncation gives the GPU's cells exactly, all 768, at every case.
+OpenGL leaves the conversion's rounding to the implementation, so `render::Half`
+mirrors the machine this was measured on and the check accepts the other
+direction too; another GPU may draw a pixel whose luma sits in that sliver — one
+half-float step, 1/4096 of full scale for a threshold between 0.25 and 0.5 — in
+the cell's other colour.
+
+**The GPU's texture filter is not the spec's arithmetic to the last bit.** About
+0.2% of the 256×192 raster's bytes come back from the GPU one level away from the
+CPU's float bilinear (8.9% on ofxprobe's ramp, whose gradients are four levels a
+pixel). Quantising the bilinear weights or coordinates to 1/256, 1/512 or 1/64,
+rounding or truncating, cut the count by at most a quarter, made it worse as
+often, and never reached zero, so the mirror stays the
+spec's float arithmetic and `--cpu` asserts what is true instead: every raster
+byte within one level, and every output pixel that differs traced to one.
+
+**A count of differing pixels with a tolerance is a guess; explain them.** The
+first `--cpu` compared frames against an allowance and had to be loosened to
+0.44% for one configuration whose stripe edges land exactly on pixel centres. It
+now reads the GPU's raster and attribute buffers back (`Pilot::PassesForTest`)
+and classifies every pixel that differs by more than one level. It is a *tie*
+if a decision sat exactly on its edge and is shown to: the CPU's compose pass,
+on the GPU's own buffers, gives the GPU's answer a hair from the pixel centre
+(position), or with the cell's threshold put a hair either side of a luma that
+is within one half-float step of it (threshold), or the cell's own working —
+`render::Working` — has a mean channel, the brightest channel or a pixel's luma
+within 1e-5 of the value it is compared with (cell). It is *rounding* if the
+compose pass agrees on the GPU's buffers and this Spectrum pixel's raster byte,
+or a byte in its cell, is the one a level out. Anything else fails. The control
+— the CPU a twentieth of the tape ahead — leaves 77,468 of 77,680 differing
+pixels unexplained at 1920×1080.
+
+**Apple's software renderer needed the value ties, and a wider position tie.**
+The M4 Max is explained by position ties within a thousandth of a pixel and by
+rounding alone. The first CI run, on the runner's software renderer, failed
+`--cpu` on all three pictures, and `PTTEST_SOFTWARE=1` — which asks CGL for that
+renderer by id — reproduced it on the Mac, case for case. Three things, all
+decisions on an edge: a cell's dark mean blue channel of exactly 107.5/255,
+which is half the basic level, read as above it; brightest channels of exactly
+235/255, the BRIGHT crossover; and pixels whose luma sat between the threshold
+the buffer read back as and the unrounded one — that renderer evidently compares
+against more than the half float it returns. And one border row whose centre was
+0.0045 of a pixel from a stripe edge, which needed the position search to go to
+1/64 of a pixel. With those classes there are no unexplained pixels on either
+renderer.
+
+**`render` is two names in `pttest`.** The harness's own `render()` lives in an
+anonymous namespace and `pilot::render` is Render.cpp's namespace, which
+`using namespace pilot` brings in. Inside the anonymous namespace the function
+wins; in `main()` the call is ambiguous and does not compile. `main()` calls
+`renderOnly()` and `readBack()` instead.
+
+**The demo check reads the message from `Frame.h` now.** `kErrorMessage`,
+`kMessageX` and `kMessageY` moved out of `Pilot.cpp` so the OpenFX build draws the
+same message from the same three lines, and `demo/tools/check_shaders.py` finds
+them by pattern. Keep the declaration shape.
+
 **A ranged parameter cannot have a ranged default.** `SetParamInfo` clamps an
 `FF_TYPE_STANDARD` default into 0..1 *before* returning, and `SetParamRange` can
 only be called afterwards. So every ranged host parameter here is 0..1 and the
@@ -291,6 +358,15 @@ missing float-ambiguity window, the sweep's impossible floor for `Message On`, a
 | 51 | `verify.sh` shaders | exactly 4 shaders extracted, all compile | none | the count is asserted, not counted up to — a check that silently looks at nothing is worse than no check | no | no |
 | 52 | `--pixels` Mix 0 | two renders at Mix 0 with everything else different | **none** — byte-identical | `mix( clip, col, 0 )` is `clip*1 + col*0`, exact in GLSL. An operator who winds Mix down gets their clip back, not something a rounding away from it | **yes** | **yes — two rasters** |
 | 53 | `--bench` | ms/frame at three sizes | **not pass/fail** | there is no threshold worth asserting on somebody else's GPU. It is recorded so "it feels slower" becomes a comparison. `glFinish` on both sides and no readback; three runs of 300 frames agree to 0.005 ms | **yes** | yes, by construction |
+| 54 | `--cpu` raster | Render.cpp's 256×192 raster against the GPU's, byte for byte, 12 configurations × 3 pictures | **1 level** | the GPU's texture filter is not the spec's float bilinear to the last bit (§3). Measured: 441 of 196,608 bytes off by one at 1920×1080, 589 at 640×480, 17,430 on ofxprobe's ramp at 640×360, none by two | **yes** | **yes — three pictures** |
+| 55 | `--cpu` cells | Render.cpp's attribute pass fed the GPU's own raster, against the GPU's cells | **none**, except a tie: threshold one half-float step up, or a decision within 1e-5 of its edge | the RGBA16F conversion's rounding is the implementation's (§3); 1e-5 is ~64 float ulps of a mean of 64 values near 0.5, and 390 times smaller than one level of the raster. Measured: 768 of 768 exact on the M4; on the software renderer 1 cell (a blue mean of exactly half the level) at 1080p and 22 on the ramp (peaks of exactly 235/255) | **yes** | **yes** |
+| 56 | `--cpu` frame | every output pixel that differs by more than one level is a tie or a rounding | **0 unexplained** | a classification, not a tolerance (§3). Position ties are looked for 1/1000, then 1/256, then 1/64 of a pixel away: the first is four float ulps of the coordinate at 1920 wide (1.2e-7 × 1920 = 2.3e-4 px); the last is a quarter of the 1/16 pixel OpenGL's rasteriser guarantees, and 134 times smaller than the narrowest Spectrum pixel any check renders (2.1 px). Threshold ties need the luma within one half-float step. Measured: 0 unexplained in all 36 cases on both renderers; the M4 never needs more than 1/1000, the software renderer 1/64 once | **yes** | **yes — three pictures, two renderers** |
+| 57 | `--cpu` one-level differences | pixels that differ by exactly one level | **not asserted** | only a Mix strictly between 0 and 1 makes them: the output's eight-bit rounding of a value on a half step. 8.5% of the frame at Mix 0.5; zero in every case at Mix 0 or 1 | **yes** | no |
+| 58 | `--cpu` control | the CPU a twentieth of the tape ahead of the GPU | **> 1% of the frame unexplained** | the negative control for line 56. Measured 77,468 of 2,073,600 (3.7%) at 1920×1080, 11,640 at 640×480, 3,337 on the ramp | **yes** | **yes** |
+| 59 | `--transition` | `render::Transition` against the transition the GPU's Paper and Black frames imply, six fader positions × Mix 1 and 0.6 | **0 unexplained** | a pixel may differ only where line 56 explained a difference in one of the two GPU frames it was built from. Measured 0 of up to 231 at 1920×1080 | **yes** | **yes — two rasters** |
+| 60 | `--transition` first frame | Transition 0 with Border Off is SourceFrom | **none** — byte-identical | nothing has arrived and Background = Clip shows the outgoing shot; Mix at 1 is `clip*0 + clip*1`, exact | no | **yes** |
+| 61 | `--transition` control | SourceFrom and SourceTo swapped | **> 1% unexplained** | the negative control for line 59. Measured 1,076,067 of 2,073,600 (52%) | **yes** | **yes** |
+| 62 | `--cpu-bench` | Render.cpp's ms/frame, threaded and single | **not pass/fail** | as line 53, for the CPU | no | yes, by construction |
 
 Two things the table does not contain, and the absence is deliberate:
 
@@ -370,11 +446,13 @@ Two things the table does not contain, and the absence is deliberate:
 - **`Bright = Auto`'s crossover is half way between the two hardware levels**
   (0.921 on the brightest channel in the cell). That is arithmetic; whether it is
   the right *aesthetic* call on real footage has not been checked.
-- **No OpenFX port, no factory presets.** Neither is started. (The browser demo
-  exists: see §8.) `pttest --pipe` (raw RGBA frames in and out, the fleet's format, with
+- **No factory presets.** Not started. (The browser demo exists: see §8; the
+  OpenFX build exists: see §9, which says what of it is assumed.) `pttest --pipe` (raw RGBA frames in and out, the fleet's format, with
   a `frame Name value` cue sheet) was added on 2026-09-23 to film the video; it
   is a renderer, asserts nothing, and no check runs through it.
 - **Render cost figures are macOS-only.** Nothing has timed the Windows build.
+- **The OpenFX build has never been inside a real OpenFX host** — not Resolve,
+  Vegas, Nuke or Natron. See §9 for what has been checked and where.
 
 ## 6. Open questions
 
@@ -414,6 +492,12 @@ Two things the table does not contain, and the absence is deliberate:
   https://stoatworks-labs.com/software/pilot/guide/.
 - Display name `SW Pilot`, FFGL id `PT01`, bundle id `com.stoatworks.ffgl.pilot`,
   version `0.1.0` in both `CMakeLists.txt` and `source/StoatworksAbout.h`.
+- OpenFX: identifier `com.stoatworks.pilot`, label `Pilot`, grouping `Stoatworks`,
+  bundle id `com.stoatworks.pilot.ofx`. Parameter script names (`machine`, `baud`,
+  `ink`, `paper`, `bright`, `progress`, `sync`, `errorRate`, `messageOn`,
+  `borderOn`, `borderWidth`, `pilotLength`, `mix`, `background`) are what saved
+  projects refer to: permanent. The Type control's script name is `machine`, not
+  `type`, on purpose.
 - Standard AI disclaimer in the README, and it says what the harness proves.
 
 ## 8. The browser demo
@@ -429,8 +513,8 @@ halves are not equally faithful.
 into `demo/plugin.js` unedited, so the compose shader's copy of the address
 order is the one that paints the page. `demo/tools/check_shaders.py` compares
 all four character for character, and also holds the loading-error message's
-text, its origin and every glyph the page carries against `Pilot.cpp` and
-`Font.cpp`, row for row. `tools/verify.sh` runs it.
+text, its origin and every glyph the page carries against `Frame.h` (in
+`Pilot.cpp` until the OpenFX port) and `Font.cpp`, row for row. `tools/verify.sh` runs it.
 
 **What is a port, checked by a reader and nothing else.** The whole CPU chain,
 because §2's rule — almost nothing is decided in the shader that could be
@@ -438,7 +522,8 @@ decided on the CPU — means the shaders alone draw nothing: `Loader.cpp`
 (`HashInt`, `Hash3`, `Hash01`, `BlockFails`, `Evaluate`, `BorderAt`,
 `HalfCycleContinuous`, `ByteIndex`, `FlashColour`), the `Machines.cpp` table,
 `Controls.h`, `Spectrum.cpp`'s palette, `effectiveProgress()`,
-`buildMessageTexture()` and every uniform `ProcessOpenGL()` sets. Where the C++
+`buildMessageTexture()` and every uniform `frame::Prepare()` works out (inline
+in `ProcessOpenGL()` when the port was made). Where the C++
 is `float` the port rounds through `Math.fround`, and the hash is exact in 32
 bits through `Math.imul`, so the same tape fails in the same blocks.
 
@@ -477,6 +562,82 @@ sync.
 Deploy with `cf-run npx wrangler deploy` from the repo root; there is no build
 step. Verify by content, not by status code:
 `curl -s 'https://pilot-demo.stoatworks-labs.com/?cb=1' | grep -o '<title>[^<]*'`.
+
+## 9. The OpenFX build
+
+`source/ofx/PilotOFX.cpp`, built as `Pilot.ofx.bundle` for macOS (universal),
+Windows (x64) and Linux (x86_64). Added 2026-10-03, following the fleet's
+pattern (macroblock, nesolume, flenser).
+
+**What is shared, and what is copied.** Everything that is not per-pixel is the
+FFGL build's own code, linked from `pilot_model`, an OBJECT library with no GL in
+it: `Spectrum.cpp`, `Loader.cpp`, `Machines.cpp`, `Controls.h`, `Font.cpp` and
+`Frame.cpp`, which is where one frame's uniforms and the controls' defaults now
+live for both builds — `ProcessOpenGL()` and the OpenFX render call the same
+`frame::Prepare()`. What is copied is the GLSL: `Render.cpp` is the raster,
+attribute and compose passes in C++, statement for statement in float, including
+the two intermediate buffers' rounding (RGBA8 raster, RGBA16F threshold), marked
+`//= mirrored:` beside each raw string and each function. The address itself is
+not copied a fourth time: the CPU calls `zx::ScreenIndex`. The FFGL build was
+refactored onto `Frame.cpp` and renders byte-identically to before at eleven
+configurations, compared PNG for PNG.
+
+**The clock.** OpenFX renders frames alone, out of order, on several threads,
+and `Loader.h` already keeps no state between frames, so nothing here had to be
+reformulated. OFX time is in frames; the border and Clip time take seconds as
+`time / output frame rate`. Clip time therefore runs along the host's timeline
+from its zero, and loops.
+
+**What is dropped: Beat and Bar.** An OpenFX host gives a plugin no tempo and no
+bar position. The Sync menu is Manual and Clip time, at the FFGL indices; the
+plugin description says the other two are FFGL-only.
+
+**The transition.** Declared in the same plugin as the Filter and General
+contexts. SourceTo is the picture that loads, the host's `Transition` parameter
+is Progress (clamped, not wrapped, so the last frame is a whole tape), and
+SourceFrom takes the one role the compose pass gives the clip a second time:
+what Background = Clip shows through an address that has not arrived, and what
+Mix fades against. In the filter both roles are the Source, so the transition is
+one substitution in one function (`render::Transition`), not a second renderer —
+which is why it was taken rather than declined. In the transition context
+Progress and Sync are not declared, and Background defaults to Clip, because
+under Paper the outgoing shot would never be seen. The endpoints are not the two
+clips: the first frame has the pilot-tone border round the outgoing shot (Border
+Off makes it exactly the outgoing shot), and the last is the loaded Spectrum
+screen, after which the edit cuts to the real picture. That is the effect — at
+Progress 1 the FFGL build shows the same screen — and the description says so.
+`isIdentity` at Mix 0 returns the Source, or SourceFrom.
+
+**Verified** (M4 Max, in an extended build of resolume-ofx-bridge's `ofxprobe`
+that hosts the Transition context and takes input images and a render time; the
+stock probe instantiates the Filter context only, on its own ramp, at time 0):
+
+- The bundle's frame is **byte-identical** to `pttest --pipe --via-cpu` (Render.cpp
+  in the harness) in twelve filter configurations at 1920×1080 and at 640×480,
+  and in the transition at six positions × two Mix at 1920×1080 against the
+  composite the CPU's own Paper/Black frames imply. So the marshalling adds
+  nothing, and what `--cpu` and `--transition` say about Render.cpp holds for the
+  bundle.
+- Against the FFGL GPU render of the same card (`pttest --pipe`), the bundle
+  differs by more than one level at 0–325 of 2,073,600 pixels in eleven of those
+  configurations and 9,081 in the one built on stripe edges — the same counts
+  `--cpu` classifies at the same settings — and every transition pixel that
+  differs from the GPU-built transition is one where the GPU's and the CPU's
+  filter frames differ.
+- Frame 30 rendered alone is byte-identical to frame 30 rendered after 0–29 in
+  one instance (Sync = Clip time); frame 0 differs from it by 1.8% of the frame,
+  so the comparison can fail.
+- Float images give the same frame as 8-bit ones (two configurations).
+- Transition 1 equals the filter at Progress 1; Transition 0 with Border Off is
+  SourceFrom; Mix 0 through `isIdentity` is the input, both contexts.
+- 1920×1080 costs 5.9 ms a frame through the test host's thread suite, and
+  4.6 ms on 16 threads / 35 ms on one in `pttest --cpu-bench`.
+
+**Not verified:** never loaded into DaVinci Resolve, Vegas, Nuke or Natron — how
+the controls present, whether Resolve lists the transition, and how a real host
+drives `Transition`, are all untested. The Windows and Linux builds are compiled
+(and the Linux one dlopened on Rocky 8) by CI and have never rendered a frame.
+16-bit images have never been fed to it (the test host delivers 8-bit and float).
 
 ## Notes
 

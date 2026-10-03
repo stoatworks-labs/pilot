@@ -1,12 +1,14 @@
 # Pilot user guide
 
 Pilot is **a ZX Spectrum tape loader for [Resolume](https://resolume.com) Arena
-and Avenue**, as an FFGL effect. The clip arrives the way a Spectrum loaded a
-screen: in screen-memory order, at the baud rate, monochrome first and colour
-last, with the border striped by the loading signal itself. It is a transition
-in practice — but not a shape moving across the frame. It is an **address
-order**, and the pattern it makes is the one the hardware made, not one anybody
-chose.
+and Avenue**, as an FFGL effect — and, as an OpenFX effect and transition, for
+DaVinci Resolve, Vegas, Nuke and Natron (see
+[OpenFX](#openfx--resolve-vegas-nuke-natron)). The clip arrives the way a
+Spectrum loaded a screen: in screen-memory order, at the baud rate, monochrome
+first and colour last, with the border striped by the loading signal itself. It
+is a transition in practice — but not a shape moving across the frame. It is an
+**address order**, and the pattern it makes is the one the hardware made, not
+one anybody chose.
 
 ![A ZX Spectrum tape load in progress: two thirds of a monochrome picture on screen, the last third arriving in an eight-line interleave, framed by yellow and blue border stripes](thumb.png)
 
@@ -20,6 +22,8 @@ chose.
 > are confirmed to change the picture. It has **never been loaded into Resolume
 > on macOS**, so how the controls *present* in the inspector is untested.
 > On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every control matching what the plugin declares — on software rendering, so that says nothing about a GPU.
+> The OpenFX build has been run only in a test host, **never in Resolve** or any
+> other real OpenFX application.
 > **Try it on a spare layer first**, and please report anything that misbehaves.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human
@@ -266,6 +270,10 @@ expensive passes always run at 256×192 and 32×24. Measured on an M4 Max:
 
 Nothing has been timed on Windows or on an Intel Mac.
 
+The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
+1920×1080 with 16 threads on the same machine (1.8 ms at 1280×720, 11 ms at
+3840×2160), and about seven times that on a single thread.
+
 ---
 
 ## Known limits
@@ -286,10 +294,57 @@ Nothing has been timed on Windows or on an Intel Mac.
 - **Bar is always four beats.**
 - **At the end of an error hold the picture jumps**, for one frame, to the
   retry's progress. A real machine drew the retry over the old picture.
-- **No factory presets** and no OpenFX port.
+- **No factory presets.**
+- **The OpenFX build has never been run in Resolve**, Vegas, Nuke or Natron —
+  only in a command-line test host. How its controls present there, and how a
+  host offers the transition, are untested. It has no Beat or Bar sync.
 - **There is a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
   It is a port to a web page, not the plugin: the shaders run in WebGL2 and any CPU
   half is rewritten in JavaScript. The page lists what it does not reproduce.
+
+---
+
+## OpenFX — Resolve, Vegas, Nuke, Natron
+
+The same effect builds as an OpenFX plugin for DaVinci Resolve (Edit and Color
+pages, and Fusion), Vegas Pro, Nuke and Natron. It is a separate download —
+`pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip` or
+`pilot-ofx-linux-x86_64.zip`, from the release after v0.1.0 — and it goes in the
+OpenFX folder, not Resolume's:
+
+```
+macOS    /Library/OFX/Plugins/
+Windows  C:\Program Files\Common Files\OFX\Plugins\
+Linux    /usr/OFX/Plugins/
+```
+
+Restart the host and it appears as **Pilot**, under **Stoatworks**, in two
+places:
+
+- **As an effect** on a clip, with the controls this guide describes. Progress
+  is keyframeable; **Sync** offers **Manual** and **Clip time**, where the tape
+  runs at the baud rate along the timeline and loops.
+- **As a transition** between two clips. The transition's own position is the
+  tape: the incoming clip is the picture that loads, and the outgoing clip is
+  what every address that has not arrived yet shows. **Background** starts on
+  **Clip** here — choose Paper for a machine's blank screen instead — and
+  **Mix** fades the load against the outgoing clip. There is no Progress or
+  Sync, because the transition is the clock. The border is there from the first
+  frame (turn **Border On** off for a first frame that is exactly the outgoing
+  clip), and the last frame is the fully loaded Spectrum screen, after which the
+  edit cuts to the real incoming picture.
+
+What the OpenFX build does not have:
+
+- **Beat and Bar sync.** An OpenFX host does not give a plugin a tempo, so those
+  two modes are not offered.
+
+It renders on the CPU rather than the GPU — about 5 ms a frame at 1920×1080 on a
+16-thread Apple M4 Max, about 35 ms on a single thread — and the picture matches
+the Resolume build's except for the odd pixel sitting exactly on the edge
+between two Spectrum pixels or two border stripes, or exactly on its cell's
+brightness threshold, which can take the neighbouring colour: typically a few
+hundred pixels in a 1920×1080 frame.
 
 ---
 
