@@ -365,11 +365,30 @@ CGLContextObj createContext()
 		static_cast< CGLPixelFormatAttribute >( 0 )
 	};
 
+	//PTTEST_SOFTWARE=1 asks for Apple's software renderer by id, which is what
+	//GitHub's GPU-less macOS runner falls back to. It is the only way to
+	//reproduce a CI-only rasterising failure on a Mac that has a GPU.
+	const CGLPixelFormatAttribute forcedSoftware[] = {
+		kCGLPFAOpenGLProfile, static_cast< CGLPixelFormatAttribute >( kCGLOGLPVersion_GL4_Core ),
+		kCGLPFARendererID, static_cast< CGLPixelFormatAttribute >( kCGLRendererGenericFloatID ),
+		kCGLPFAColorSize, static_cast< CGLPixelFormatAttribute >( 24 ),
+		kCGLPFAAlphaSize, static_cast< CGLPixelFormatAttribute >( 8 ),
+		static_cast< CGLPixelFormatAttribute >( 0 )
+	};
+	const char* wantSoftware = std::getenv( "PTTEST_SOFTWARE" );
+
 	CGLPixelFormatObj format = nullptr;
 	GLint formatCount        = 0;
-	if( CGLChoosePixelFormat( accelerated, &format, &formatCount ) != kCGLNoError || format == nullptr )
+	if( wantSoftware != nullptr && *wantSoftware != '\0' && *wantSoftware != '0' )
+	{
+		if( CGLChoosePixelFormat( forcedSoftware, &format, &formatCount ) != kCGLNoError || format == nullptr )
+			return nullptr;
+	}
+	else if( CGLChoosePixelFormat( accelerated, &format, &formatCount ) != kCGLNoError || format == nullptr )
+	{
 		if( CGLChoosePixelFormat( software, &format, &formatCount ) != kCGLNoError || format == nullptr )
 			return nullptr;
+	}
 
 	CGLContextObj context = nullptr;
 	const CGLError error  = CGLCreateContext( format, nullptr, &context );
@@ -1990,17 +2009,29 @@ std::vector< CpuCase > cpuCases()
 // by more than one level has to be EXPLAINED, by one of exactly two causes,
 // and anything left over fails:
 //
-//   tie       the output pixel's centre lands exactly on a decision edge -- the
-//             line between two Spectrum pixels, or between two border
-//             stripes -- where the GPU's interpolated UV and the CPU's exact
-//             one fall on opposite sides. Proved, not assumed: the CPU's own
-//             compose pass, moved a thousandth of a pixel, gives the GPU's
-//             answer.
+//   tie       a decision sat exactly on its edge, and the GPU's own rounding
+//             fell the other way. Three edges, each proved rather than assumed:
+//               - position: the pixel centre is on the line between two
+//                 Spectrum pixels or two stripes. The CPU's compose pass, on
+//                 the GPU's own buffers, a hair away gives the GPU's answer --
+//                 a thousandth of a pixel first, then 1/256, then at most 1/64
+//                 (kTieRadii). How far it had to look is reported: the M4
+//                 Max's GPU never needs more than the first; Apple's software
+//                 renderer, which interpolates less exactly, needed 1/64 for
+//                 one stripe edge 0.0045 of a pixel from a row centre.
+//               - threshold: the pixel's luma is within one half-float step of
+//                 its cell's threshold, which is where an RGBA16F target's
+//                 implementation-defined rounding decides. With the threshold
+//                 put a hair either side of the luma, the CPU gives the GPU's
+//                 answer.
+//               - cell: one of the cell's own decisions -- a mean channel
+//                 against half the level, the brightest channel against
+//                 235/255, a pixel's luma against the threshold -- is within
+//                 kValueTie of its edge (render::Working says how close).
 //   rounding  the GPU's texture filter put a raster byte one level away from
-//             the CPU's, inside this pixel's 8x8 cell, and that moved the
-//             cell's threshold or this pixel across it. Proved, not assumed:
-//             the raster is read back from the GPU and compared byte for byte,
-//             and every byte must be within one level.
+//             the CPU's, and that byte is this pixel's or in this pixel's cell.
+//             Proved, not assumed: the raster is read back from the GPU and
+//             compared byte for byte, and every byte must be within one level.
 //
 // A difference of exactly one level is the output's own eight-bit rounding of
 // a value that sits on a half step, which only Mix strictly between 0 and 1
@@ -2010,18 +2041,83 @@ std::vector< CpuCase > cpuCases()
 // renders the CPU at a different Progress, and the unexplained count there
 // must be large.
 //---------------------------------------------------------------------------
+
+/// How far from the pixel centre a position tie may be looked for, in output
+/// pixels, nearest first. OpenGL leaves varying interpolation's precision to
+/// the implementation and only promises four bits of sub-pixel precision in
+/// the rasteriser (GL_SUBPIXEL_BITS >= 4, 1/16 of a pixel); the last radius is
+/// a quarter of that. The narrowest feature any check renders is a Spectrum
+/// pixel 2.1 output pixels wide, 134 times the last radius, so a real
+/// disagreement cannot hide behind it -- the control, a twentieth of the tape
+/// out, stays unexplained.
+constexpr float kTieRadii[] = { 1.0f / 1000.0f, 1.0f / 256.0f, 1.0f / 64.0f };
+
+/// How near its edge a cell's decision must be to count as a tie. A mean of up
+/// to 64 eight-bit values, summed in float in whatever order a GPU likes,
+/// carries some 64 ulps of order-dependent error near 0.5 (64 x 6e-8 = 4e-6);
+/// 1e-5 covers that, and is 390 times smaller than the one-level step
+/// (3.9e-3) every value here is built from, so it cannot swallow a real
+/// difference in the picture.
+constexpr float kValueTie = 1e-5f;
+
+/// One half-float step at t: the gap an RGBA16F rounding can open.
+float halfStep( float t )
+{
+	return t > 0.0f ? std::ldexp( 1.0f, std::ilogb( t ) - 10 ) : std::ldexp( 1.0f, -24 );
+}
+
+/// `theirs` one half-float step above `ours`: the same threshold rounded to
+/// nearest where the CPU rounds toward zero (see render::Half).
+bool oneHalfStepUp( float ours, float theirs )
+{
+	uint32_t bits = 0;
+	std::memcpy( &bits, &ours, sizeof( bits ) );
+	bits += 0x2000u;//one unit in the last of the ten mantissa bits a half keeps
+	float up = 0.0f;
+	std::memcpy( &up, &bits, sizeof( up ) );
+	return up == theirs;
+}
+
+/// Is the difference between the CPU's cell and the GPU's one only a decision
+/// that sat on its edge? `w` is how the CPU's cell was worked out.
+bool cellTie( const render::CellWorking& w, const render::Cell& ours, const float gpu[ 4 ] )
+{
+	if( ours.threshold != gpu[ 3 ] && !oneHalfStepUp( ours.threshold, gpu[ 3 ] ) )
+		return false;
+
+	const float crossover = ( ( 215.0f / 255.0f ) + 1.0f ) * 0.5f;
+	if( ours.bright != gpu[ 2 ] )
+		return std::fabs( w.peak - crossover ) < kValueTie;//the colours follow the level
+
+	//A pixel on the threshold moves between the two means: either may change.
+	if( w.nearest < kValueTie )
+		return true;
+
+	const float mid   = ( ours.bright > 0.5f ? 1.0f : 215.0f / 255.0f ) * 0.5f;
+	const auto onEdge = [ mid ]( const float c[ 3 ] ) {
+		return std::fabs( c[ 0 ] - mid ) < kValueTie || std::fabs( c[ 1 ] - mid ) < kValueTie
+		       || std::fabs( c[ 2 ] - mid ) < kValueTie;
+	};
+	if( ours.ink != gpu[ 0 ] && !onEdge( w.ink ) )
+		return false;
+	if( ours.paper != gpu[ 1 ] && !onEdge( w.paper ) )
+		return false;
+	return true;
+}
+
 struct StageDiff
 {
 	int rasterBytes      = 0;   ///< raster bytes that differ, of 196,608
 	int rasterWorst      = 0;   ///< the largest, in levels of 255
-	int cellsOtherRound  = 0;   ///< pass 2 alone: cells whose threshold is one half-float step up
+	int cellsTie         = 0;   ///< pass 2 alone: cells that differ only by a tie
 	int cellsDiffering   = 0;   ///< pass 2 alone: cells that differ any other way; must be zero
 	int thresholdsMoved  = 0;   ///< cells whose threshold the CPU's own raster moved
 	long long frameDiffering = 0;///< pixels that differ at all
 	int frameWorst       = 0;
 	long long beyondOne  = 0;   ///< ...by more than one level
-	long long ties       = 0;   ///< of those, a decision edge on the pixel centre
-	long long rounding   = 0;   ///< of those, a raster byte one level out in the cell
+	long long ties       = 0;   ///< of those, a decision on its edge
+	float tieRadius      = 0.0f;///< the furthest a position tie had to be looked for, in pixels
+	long long rounding   = 0;   ///< of those, a raster byte one level out
 	long long unexplained = 0;  ///< the rest; must be zero
 };
 
@@ -2045,64 +2141,59 @@ StageDiff measureCase( Instance& i, const Target& target, GLuint input, const st
 
 	const frame::Uniforms u = frame::Prepare( cpuHost, ofxProgress( cpuHost, seconds ), seconds );
 	const render::View view = viewOf( picture, w, h );
+	const int cells         = zx::kCellsX * zx::kCellsY;
 
-	//Pass 1, against the GPU's raster.
+	//Pass 1, against the GPU's raster. Both bottom row first, as the buffers are.
 	render::Raster raster;
 	render::RasterRows( view, raster, 0, zx::kScreenH );
-	//Both bottom row first, as the buffers are.
 	std::vector< char > pixelRounded( static_cast< size_t >( zx::kScreenW ) * zx::kScreenH, 0 );
-	std::vector< char > cellRounded( zx::kCellsX * zx::kCellsY, 0 );
+	std::vector< char > cellRounded( cells, 0 );
 	for( size_t k = 0; k < raster.rgba.size(); ++k )
 	{
 		const int diff = std::abs( int( raster.rgba[ k ] ) - int( gpuRaster[ k ] ) );
 		if( diff == 0 )
 			continue;
 		++d.rasterBytes;
-		d.rasterWorst        = std::max( d.rasterWorst, diff );
-		pixelRounded[ k / 4 ] = 1;
+		d.rasterWorst = std::max( d.rasterWorst, diff );
+		const int pixel = static_cast< int >( k / 4 );
+		pixelRounded[ pixel ] = 1;
+		cellRounded[ ( pixel / zx::kScreenW / 8 ) * zx::kCellsX + ( pixel % zx::kScreenW ) / 8 ] = 1;
 	}
 
-	//Pass 2 alone: the CPU's attribute pass fed the GPU's raster must give the
-	//GPU's cells exactly -- or, for the threshold, one half-float step up,
-	//which is the same value rounded to nearest instead of toward zero (see
-	//render::Half: OpenGL lets the implementation pick).
+	//Pass 2 alone: the CPU's attribute pass, fed the GPU's raster, must give
+	//the GPU's cells -- exactly, or differing only by a tie.
 	render::Raster theirs;
 	theirs.rgba = gpuRaster;
-	render::Attributes fromTheirs;
-	render::Attribute( theirs, u.brightMode, fromTheirs );
-	const auto oneHalfStepUp = []( float t ) {
-		uint32_t bits = 0;
-		std::memcpy( &bits, &t, sizeof( bits ) );
-		bits += 0x2000u;//one unit in the last of the ten mantissa bits a half keeps
-		float up = 0.0f;
-		std::memcpy( &up, &bits, sizeof( up ) );
-		return up;
-	};
-	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
+	for( int c = 0; c < cells; ++c )
 	{
-		const render::Cell& cell = fromTheirs.cells[ c ];
-		const float* g           = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
-		const bool colours       = cell.ink == g[ 0 ] && cell.paper == g[ 1 ] && cell.bright == g[ 2 ];
-		if( colours && cell.threshold == g[ 3 ] )
+		const render::CellWorking work = render::Working( theirs, c % zx::kCellsX, c / zx::kCellsX );
+		const render::Cell cell         = render::Decide( work, u.brightMode );
+		const float* g                  = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
+		if( cell.ink == g[ 0 ] && cell.paper == g[ 1 ] && cell.bright == g[ 2 ] && cell.threshold == g[ 3 ] )
 			continue;
-		if( colours && oneHalfStepUp( cell.threshold ) == g[ 3 ] )
-			++d.cellsOtherRound;
+		if( cellTie( work, cell, g ) )
+			++d.cellsTie;
 		else
 			++d.cellsDiffering;
 	}
 
-	//And the CPU's cells from its OWN raster: where their threshold differs
-	//from the GPU's, a raster byte one level out has moved it.
-	render::Attributes ours;
-	render::Attribute( raster, u.brightMode, ours );
-	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
-		if( ours.cells[ c ].threshold != gpuAttr[ static_cast< size_t >( c ) * 4 + 3 ] )
-		{
-			cellRounded[ c ] = 1;
+	//The CPU's cells from its OWN raster. Where one differs from the GPU's, it
+	//is explained if a raster byte in it is a level out, or if the difference
+	//is a tie; either way the pixels it colours may differ.
+	std::vector< char > cellExplained( cells, 0 );
+	for( int c = 0; c < cells; ++c )
+	{
+		const render::CellWorking work = render::Working( raster, c % zx::kCellsX, c / zx::kCellsX );
+		const render::Cell cell         = render::Decide( work, u.brightMode );
+		const float* g                  = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
+		if( cell.threshold != g[ 3 ] )
 			++d.thresholdsMoved;
-		}
+		const bool same = cell.ink == g[ 0 ] && cell.paper == g[ 1 ] && cell.bright == g[ 2 ] && cell.threshold == g[ 3 ];
+		cellExplained[ c ] = !same && ( cellRounded[ c ] || cellTie( work, cell, g ) );
+	}
+
 	render::Attributes theirCells;
-	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
+	for( int c = 0; c < cells; ++c )
 	{
 		const float* g        = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
 		theirCells.cells[ c ] = { g[ 0 ], g[ 1 ], g[ 2 ], g[ 3 ] };
@@ -2132,35 +2223,68 @@ StageDiff measureCase( Instance& i, const Target& target, GLuint input, const st
 				continue;
 			++d.beyondOne;
 
-			//The CPU's compose pass, run on the GPU's OWN buffers at this pixel
-			//centre and at the eight points a thousandth of a pixel around it.
 			const unsigned char* in = picture.data() + ( static_cast< size_t >( y ) * w + x ) * 4;
 			const float clip[ 4 ]   = { in[ 0 ] / 255.0f, in[ 1 ] / 255.0f, in[ 2 ] / 255.0f, in[ 3 ] / 255.0f };
 			const float pX          = ( x + 0.5f ) / float( w );
 			const float pY          = ( y + 0.5f ) / float( h );
-			const float dx          = 1e-3f / float( w );
-			const float dy          = 1e-3f / float( h );
-			const auto matchesGpu   = [ & ]( float sx, float sy ) {
+			const auto matchesGpu   = [ & ]( const render::Attributes& cellsUsed, float sx, float sy ) {
 				float out[ 4 ];
-				render::ComposeAt( u, theirs, theirCells, clip, sx, sy, out );
+				render::ComposeAt( u, theirs, cellsUsed, clip, sx, sy, out );
 				int off = 0;
 				for( int k = 0; k < 4; ++k )
 					off = std::max( off, std::abs( int( std::lround( std::clamp( out[ k ], 0.0f, 1.0f ) * 255.0f ) ) - int( g[ k ] ) ) );
 				return off <= 1;
 			};
 
-			//At the centre it does NOT give the GPU's answer, so the compose
-			//pass itself disagrees here. A tie if a hair away it does.
-			if( !matchesGpu( pX, pY ) )
+			//Which Spectrum pixel this is, by the compose pass's own mapping.
+			const float ix     = ( pX - inset ) / span;
+			const float iy     = ( pY - inset ) / span;
+			const bool screen  = ix >= 0.0f && ix < 1.0f && iy >= 0.0f && iy < 1.0f;
+			const int px       = std::clamp( int( ix * 256.0f ), 0, 255 );
+			const int pyUp     = 191 - std::clamp( int( ( 1.0f - iy ) * 192.0f ), 0, 191 );
+			const int cell     = ( pyUp / 8 ) * zx::kCellsX + px / 8;
+			const size_t index = static_cast< size_t >( yTop ) * w + x;
+
+			//The CPU's compose pass on the GPU's OWN buffers. If it does not give
+			//the GPU's answer at the centre, the compose pass itself disagrees
+			//here: a position tie, or a threshold tie, or nothing.
+			if( !matchesGpu( theirCells, pX, pY ) )
 			{
 				bool tie = false;
-				for( int sy = -1; sy <= 1 && !tie; ++sy )
-					for( int sx = -1; sx <= 1 && !tie; ++sx )
-						tie = ( sx != 0 || sy != 0 ) && matchesGpu( pX + sx * dx, pY + sy * dy );
+				for( const float radius : kTieRadii )
+				{
+					const float dx = radius / float( w );
+					const float dy = radius / float( h );
+					for( int sy = -1; sy <= 1 && !tie; ++sy )
+						for( int sx = -1; sx <= 1 && !tie; ++sx )
+							tie = ( sx != 0 || sy != 0 ) && matchesGpu( theirCells, pX + sx * dx, pY + sy * dy );
+					if( tie )
+					{
+						d.tieRadius = std::max( d.tieRadius, radius );
+						break;
+					}
+				}
+
+				if( !tie && screen )
+				{
+					const unsigned char* r = &gpuRaster[ ( static_cast< size_t >( pyUp ) * zx::kScreenW + px ) * 4 ];
+					const float luma       = ( r[ 0 ] / 255.0f ) * 0.299f + ( r[ 1 ] / 255.0f ) * 0.587f + ( r[ 2 ] / 255.0f ) * 0.114f;
+					const float threshold  = theirCells.cells[ cell ].threshold;
+					if( std::fabs( luma - threshold ) <= halfStep( threshold ) )
+					{
+						render::Attributes nudged = theirCells;
+						for( const float side : { kValueTie, -kValueTie } )
+						{
+							nudged.cells[ cell ].threshold = luma + side;
+							tie = tie || matchesGpu( nudged, pX, pY );
+						}
+					}
+				}
+
 				if( tie )
 				{
 					++d.ties;
-					explained[ static_cast< size_t >( yTop ) * w + x ] = 1;
+					explained[ index ] = 1;
 				}
 				else
 				{
@@ -2170,23 +2294,24 @@ StageDiff measureCase( Instance& i, const Target& target, GLuint input, const st
 			}
 
 			//On the GPU's buffers the CPU's compose pass agrees, so what differs
-			//is the buffers. Rounding, if this Spectrum pixel's own raster byte
-			//is the one a level out, or its cell's threshold moved.
-			const float ix = ( pX - inset ) / span;
-			const float iy = ( pY - inset ) / span;
-			if( ix >= 0.0f && ix < 1.0f && iy >= 0.0f && iy < 1.0f )
+			//is the buffers: this Spectrum pixel's raster byte, or its cell.
+			if( screen && pixelRounded[ static_cast< size_t >( pyUp ) * zx::kScreenW + px ] )
 			{
-				const int px   = std::clamp( int( ix * 256.0f ), 0, 255 );
-				const int pyUp = 191 - std::clamp( int( ( 1.0f - iy ) * 192.0f ), 0, 191 );
-				if( pixelRounded[ static_cast< size_t >( pyUp ) * zx::kScreenW + px ]
-				    || cellRounded[ ( pyUp / 8 ) * zx::kCellsX + px / 8 ] )
-				{
-					++d.rounding;
-					explained[ static_cast< size_t >( yTop ) * w + x ] = 1;
-					continue;
-				}
+				++d.rounding;
+				explained[ index ] = 1;
 			}
-			++d.unexplained;
+			else if( screen && cellExplained[ cell ] )
+			{
+				if( cellRounded[ cell ] )
+					++d.rounding;
+				else
+					++d.ties;
+				explained[ index ] = 1;
+			}
+			else
+			{
+				++d.unexplained;
+			}
 		}
 	}
 
@@ -2201,9 +2326,12 @@ StageDiff measureCase( Instance& i, const Target& target, GLuint input, const st
 
 void sayStage( const char* name, const StageDiff& d, int w, int h )
 {
-	Say( "    %-44s %5d (<=%d) %3d %3d/%-3d %8lld %6.3f%% %4d %7lld %7lld %6lld %5lld\n", name, d.rasterBytes, d.rasterWorst,
-	     d.thresholdsMoved, d.cellsOtherRound, d.cellsDiffering, d.frameDiffering, 100.0 * double( d.frameDiffering ) / double( w * h ), d.frameWorst,
-	     d.beyondOne, d.ties, d.rounding, d.unexplained );
+	char radius[ 16 ] = "-";
+	if( d.tieRadius > 0.0f )
+		std::snprintf( radius, sizeof( radius ), "1/%.0f", 1.0 / double( d.tieRadius ) );
+	Say( "    %-44s %5d (<=%d) %3d %3d/%-3d %8lld %6.3f%% %4d %7lld %7lld %6s %6lld %5lld\n", name, d.rasterBytes, d.rasterWorst,
+	     d.thresholdsMoved, d.cellsTie, d.cellsDiffering, d.frameDiffering, 100.0 * double( d.frameDiffering ) / double( w * h ), d.frameWorst,
+	     d.beyondOne, d.ties, radius, d.rounding, d.unexplained );
 }
 
 int cpuAt( int w, int h, bool probeRamp, int& casesRun )
@@ -2219,8 +2347,8 @@ int cpuAt( int w, int h, bool probeRamp, int& casesRun )
 	const GLuint input                         = makeInput( picture, w, h );
 
 	Say( "  %dx%d, %s\n", w, h, probeRamp ? "ofxprobe's ramp" : "the card" );
-	Say( "    %-44s %11s %3s %7s %8s %7s %4s %7s %7s %6s %5s\n", "", "raster", "thr", "cells", "differ", "", "max", ">1 lvl",
-	     "tie", "round", "unexp" );
+	Say( "    %-44s %11s %3s %7s %8s %7s %4s %7s %7s %6s %6s %5s\n", "", "raster", "thr", "cells", "differ", "", "max", ">1 lvl",
+	     "tie", "radius", "round", "unexp" );
 
 	for( const CpuCase& c : cpuCases() )
 	{
@@ -2232,7 +2360,7 @@ int cpuAt( int w, int h, bool probeRamp, int& casesRun )
 		sayStage( c.name, d, w, h );
 
 		Check( d.rasterWorst <= 1, std::string( "  " ) + c.name + ": every raster byte within one level of the GPU's" );
-		Check( d.cellsDiffering == 0, std::string( "  " ) + c.name + ": the attribute pass on the GPU's raster gives the GPU's cells" );
+		Check( d.cellsDiffering == 0, std::string( "  " ) + c.name + ": the attribute pass on the GPU's raster gives the GPU's cells, ties aside" );
 		Check( d.unexplained == 0, std::string( "  " ) + c.name + ": every pixel that differs is a tie or a raster rounding" );
 	}
 

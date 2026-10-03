@@ -237,7 +237,9 @@ void RasterRows( const View& picture, Raster& out, int rowBegin, int rowEnd )
 //
 // One cell's two colours, its BRIGHT bit and its threshold, from the 64 raster
 // pixels it covers. The threshold goes through Half() because the buffer it is
-// written to is RGBA16F.
+// written to is RGBA16F. Working() is the shader's two loops, Decide() its last
+// eight lines; the one thing added is `nearest`, for the harness, which the
+// shader has no use for and no output to put.
 //---------------------------------------------------------------------------
 namespace
 {
@@ -249,90 +251,101 @@ int NearestColour( const float c[ 3 ], float level )
 }
 } // namespace
 
+CellWorking Working( const Raster& raster, int cx, int cy )
+{
+	CellWorking w;
+
+	const int baseX = cx * 8;
+	const int baseY = cy * 8;
+
+	auto fetch = [ & ]( int x, int y, float c[ 3 ] ) {
+		const uint8_t* p = raster.rgba.data() + ( static_cast< size_t >( baseY + y ) * zx::kScreenW + baseX + x ) * 4;
+		c[ 0 ]           = FromUnorm8( p[ 0 ] );
+		c[ 1 ]           = FromUnorm8( p[ 1 ] );
+		c[ 2 ]           = FromUnorm8( p[ 2 ] );
+	};
+
+	float lo = 2.0f;
+	float hi = -1.0f;
+	for( int y = 0; y < 8; ++y )
+	{
+		for( int x = 0; x < 8; ++x )
+		{
+			float c[ 3 ];
+			fetch( x, y, c );
+			const float l = Luma( c[ 0 ], c[ 1 ], c[ 2 ] );
+			lo            = std::min( lo, l );
+			hi            = std::max( hi, l );
+		}
+	}
+
+	const float midpoint  = ( lo + hi ) * 0.5f;
+	const float contrast  = std::clamp( ( hi - lo ) * 8.0f, 0.0f, 1.0f );
+	const float threshold = Mix( 0.5f, midpoint, contrast );
+
+	float darkSum[ 3 ]  = { 0.0f, 0.0f, 0.0f };
+	float lightSum[ 3 ] = { 0.0f, 0.0f, 0.0f };
+	float darkN         = 0.0f;
+	float lightN        = 0.0f;
+	float peak          = 0.0f;
+	float nearest       = 2.0f;
+	for( int y = 0; y < 8; ++y )
+	{
+		for( int x = 0; x < 8; ++x )
+		{
+			float c[ 3 ];
+			fetch( x, y, c );
+			peak          = std::max( peak, std::max( c[ 0 ], std::max( c[ 1 ], c[ 2 ] ) ) );
+			const float l = Luma( c[ 0 ], c[ 1 ], c[ 2 ] );
+			nearest       = std::min( nearest, std::fabs( l - threshold ) );
+			if( l < threshold )
+			{
+				darkSum[ 0 ] += c[ 0 ];
+				darkSum[ 1 ] += c[ 1 ];
+				darkSum[ 2 ] += c[ 2 ];
+				darkN += 1.0f;
+			}
+			else
+			{
+				lightSum[ 0 ] += c[ 0 ];
+				lightSum[ 1 ] += c[ 1 ];
+				lightSum[ 2 ] += c[ 2 ];
+				lightN += 1.0f;
+			}
+		}
+	}
+
+	w.threshold = threshold;
+	w.peak      = peak;
+	w.nearest   = nearest;
+	for( int c = 0; c < 3; ++c )
+	{
+		w.ink[ c ]   = darkN > 0.0f ? darkSum[ c ] / darkN : 0.0f;
+		w.paper[ c ] = lightN > 0.0f ? lightSum[ c ] / lightN : 1.0f;
+	}
+	return w;
+}
+
+Cell Decide( const CellWorking& w, int brightMode )
+{
+	bool bright = brightMode == 2;
+	if( brightMode == 1 )
+		bright = w.peak > ( ( 215.0f / 255.0f ) + 1.0f ) * 0.5f;
+	const float level = bright ? 1.0f : ( 215.0f / 255.0f );
+
+	Cell cell;
+	cell.ink       = static_cast< float >( NearestColour( w.ink, level ) );
+	cell.paper     = static_cast< float >( NearestColour( w.paper, level ) );
+	cell.bright    = bright ? 1.0f : 0.0f;
+	cell.threshold = Half( w.threshold );
+	return cell;
+}
+
 void Attribute( const Raster& raster, int brightMode, Attributes& out )
 {
 	for( int cy = 0; cy < zx::kCellsY; ++cy )
-	{
 		for( int cx = 0; cx < zx::kCellsX; ++cx )
-		{
-			const int baseX = cx * 8;
-			const int baseY = cy * 8;
-
-			auto fetch = [ & ]( int x, int y, float c[ 3 ] ) {
-				const uint8_t* p = raster.rgba.data() + ( static_cast< size_t >( baseY + y ) * zx::kScreenW + baseX + x ) * 4;
-				c[ 0 ]           = FromUnorm8( p[ 0 ] );
-				c[ 1 ]           = FromUnorm8( p[ 1 ] );
-				c[ 2 ]           = FromUnorm8( p[ 2 ] );
-			};
-
-			float lo = 2.0f;
-			float hi = -1.0f;
-			for( int y = 0; y < 8; ++y )
-			{
-				for( int x = 0; x < 8; ++x )
-				{
-					float c[ 3 ];
-					fetch( x, y, c );
-					const float l = Luma( c[ 0 ], c[ 1 ], c[ 2 ] );
-					lo            = std::min( lo, l );
-					hi            = std::max( hi, l );
-				}
-			}
-
-			const float midpoint  = ( lo + hi ) * 0.5f;
-			const float contrast  = std::clamp( ( hi - lo ) * 8.0f, 0.0f, 1.0f );
-			const float threshold = Mix( 0.5f, midpoint, contrast );
-
-			float darkSum[ 3 ]  = { 0.0f, 0.0f, 0.0f };
-			float lightSum[ 3 ] = { 0.0f, 0.0f, 0.0f };
-			float darkN         = 0.0f;
-			float lightN        = 0.0f;
-			float peak          = 0.0f;
-			for( int y = 0; y < 8; ++y )
-			{
-				for( int x = 0; x < 8; ++x )
-				{
-					float c[ 3 ];
-					fetch( x, y, c );
-					peak = std::max( peak, std::max( c[ 0 ], std::max( c[ 1 ], c[ 2 ] ) ) );
-					if( Luma( c[ 0 ], c[ 1 ], c[ 2 ] ) < threshold )
-					{
-						darkSum[ 0 ] += c[ 0 ];
-						darkSum[ 1 ] += c[ 1 ];
-						darkSum[ 2 ] += c[ 2 ];
-						darkN += 1.0f;
-					}
-					else
-					{
-						lightSum[ 0 ] += c[ 0 ];
-						lightSum[ 1 ] += c[ 1 ];
-						lightSum[ 2 ] += c[ 2 ];
-						lightN += 1.0f;
-					}
-				}
-			}
-
-			bool bright = brightMode == 2;
-			if( brightMode == 1 )
-				bright = peak > ( ( 215.0f / 255.0f ) + 1.0f ) * 0.5f;
-			const float level = bright ? 1.0f : ( 215.0f / 255.0f );
-
-			float inkColour[ 3 ]   = { 0.0f, 0.0f, 0.0f };
-			float paperColour[ 3 ] = { 1.0f, 1.0f, 1.0f };
-			if( darkN > 0.0f )
-				for( int c = 0; c < 3; ++c )
-					inkColour[ c ] = darkSum[ c ] / darkN;
-			if( lightN > 0.0f )
-				for( int c = 0; c < 3; ++c )
-					paperColour[ c ] = lightSum[ c ] / lightN;
-
-			Cell& cell     = out.cells[ cy * zx::kCellsX + cx ];
-			cell.ink       = static_cast< float >( NearestColour( inkColour, level ) );
-			cell.paper     = static_cast< float >( NearestColour( paperColour, level ) );
-			cell.bright    = bright ? 1.0f : 0.0f;
-			cell.threshold = Half( threshold );
-		}
-	}
+			out.cells[ cy * zx::kCellsX + cx ] = Decide( Working( raster, cx, cy ), brightMode );
 }
 
 //---------------------------------------------------------------------------

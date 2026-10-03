@@ -79,8 +79,9 @@ void Bilinear( const View& image, float s, float t, float out[ 4 ] );
 	--cpu` reads back is, cell after cell, exactly the CPU's truncated and one
 	half-float step below its round-to-nearest). OpenGL leaves the rounding of
 	that conversion to the implementation, so another GPU may round to nearest
-	and land one step higher -- a sliver of luma 1/2048 wide, in which a pixel
-	can take the other of its cell's two colours. The harness accepts either.
+	and land one step higher -- a sliver of luma one half-float step wide
+	(1/4096 for a threshold between 0.25 and 0.5), in which a pixel can take
+	the other of its cell's two colours. The harness accepts either.
 */
 float Half( float v );
 
@@ -109,6 +110,30 @@ struct Attributes
 /// Pass 1, for raster rows [rowBegin, rowEnd) counted from the bottom. Rows
 /// are independent, so a host can split them across threads.
 void RasterRows( const View& picture, Raster& out, int rowBegin, int rowEnd );
+
+/**
+	What one cell's decisions are made from, before they are made: the
+	threshold before the RGBA16F rounding, the mean colour either side of it,
+	the brightest channel, and how close the nearest pixel's luma came to the
+	threshold. Split out of pass 2 so the harness can tell a real disagreement
+	with the GPU from a decision that sat exactly on its edge -- a mean channel
+	of exactly half the level, a peak of exactly 235/255 -- where the GPU's own
+	rounding may fall the other way.
+*/
+struct CellWorking
+{
+	float threshold  = 0.0f;
+	float ink[ 3 ]   = {};
+	float paper[ 3 ] = {};
+	float peak       = 0.0f;
+	float nearest    = 0.0f;
+};
+
+/// Pass 2's arithmetic for cell (cx, cy), counted from the bottom left.
+CellWorking Working( const Raster& raster, int cx, int cy );
+
+/// Pass 2's decisions from it: the two colours, BRIGHT and the stored threshold.
+Cell Decide( const CellWorking& working, int brightMode );
 
 /// Pass 2, all 768 cells. Cheap enough that splitting it would cost more than
 /// it saved.
