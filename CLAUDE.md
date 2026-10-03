@@ -70,6 +70,10 @@ in `Loader.cpp`.
   (default) / Cut, `endLength` 0..0.5 (0.15). Fade starts on exactly SourceFrom and
   ends on exactly SourceTo; Cut is the raw load. `render::TransitionProgress` and
   `render::EffectStrength`; the filter never sees them. Names match lenticular's.
+- **Never read a host property unguarded in the OpenFX plugin.** Resolve's Fusion
+  page reports no frame rate at all and the Support library throws on the read;
+  `framesPerSecond()` tries the output clip, the inputs, then the effect, each in
+  its own try/catch, and falls back to 24.
 - `OFXPROBE=<an ofxprobe with --context> tools/verify.sh` also renders the
   transition through the host; the stock probe skips that step.
 - **The RGBA16F threshold is rounded toward zero** in `render::Half`, because the M4
@@ -127,8 +131,10 @@ in `Loader.cpp`.
 - Never loaded into Resolume on macOS, and never installed into Arena there. On Windows, a CI build passed Resolume Arena 7.27.1's gate on llvmpipe on 2026-09-23, 9 of 9 (see README Status).
 - The universal build has never run on an Intel Mac.
 - No factory presets.
-- The OpenFX build has never been loaded into Resolve, Vegas, Nuke or Natron — only
-  into a command-line test host (an extended ofxprobe), in the Filter and Transition
+- The OpenFX build has never rendered in Resolve, Vegas, Nuke or Natron. An earlier
+  build failed on Resolve 21.1's Fusion page (no frame rate); the guard is checked
+  only in the test host's `--quirks fusion` mode. Otherwise it has run only in a
+  command-line test host (an extended ofxprobe), in the Filter and Transition
   contexts. The Windows and Linux OpenFX builds have never rendered a frame.
 - Render cost figures are macOS-only.
 

@@ -3,8 +3,9 @@
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. **It has never been loaded
 > into Resolume on macOS** (see [Status](#status) for Windows), and **the OpenFX
-> build has never been loaded into DaVinci Resolve or any other real OpenFX host**.
-> Everything below is measured offline, through the real plugin class in a
+> build has never rendered in DaVinci Resolve or any other real OpenFX host** (an
+> earlier build failed on Resolve's Fusion page; the fix is checked in a test host
+> only). Everything below is measured offline, through the real plugin class in a
 > headless GL context: the address order exists twice — as the bit
 > layout and as a plain nested loop — and `pttest --agree` proves the two agree for
 > all 6144 addresses bitwise; `pttest --reveal` renders through the shipping shader
@@ -165,7 +166,9 @@ What is different from the Resolume build, and why:
   plugin description says so). Manual and Clip time are there, at the same
   positions in the menu. Clip time runs on the host's timeline — the OFX time, in
   frames, over the output frame rate — so any frame renders the same however the
-  host reaches it, out of order or alone.
+  host reaches it, out of order or alone. **Fusion reports no frame rate; there,
+  time-based controls assume 24 fps** — Clip time's period and the border's
+  stripes run on a 24 fps clock in Resolve's Fusion page.
 - **The transition is new**, and so are its Ends. In it, Progress and Sync are
   not shown (the host owns the position), and Background defaults to Clip, as
   above.
@@ -198,11 +201,15 @@ Mix settings; frame 30 rendered alone is byte-identical to frame 30 after frames
 an identity. Under Fade, Transition 0 and 1 are SourceFrom and SourceTo byte for
 byte, rendered and as an identity, in 8-bit and float; on the ramps the frame is
 within one level of ( 1 − s ) plain + s · Cut at the remapped progress; and
-between them it is that Cut, byte for byte. The Windows and Linux builds are compiled by CI
-and the Linux one is load-tested on Rocky 8. **Not verified:** it has never been
-loaded into DaVinci Resolve, Vegas, Nuke or Natron, so how its controls present
-there, and whether a host offers the Transition context where expected, is
-untested; the Windows and Linux builds have never rendered a frame; and 16-bit
+between them it is that Cut, byte for byte. In the test host's Fusion mode
+(no frame rate anywhere, as Resolve's Fusion page) it renders — the build before
+the guard did not — exactly as a 24 fps host gets it. The Windows and Linux builds are compiled by CI
+and the Linux one is load-tested on Rocky 8. **Not verified:** it has never
+rendered in DaVinci Resolve, Vegas, Nuke or Natron — an earlier build, loaded into
+Resolve 21.1's Fusion page, failed there for want of a frame rate, and the fix is
+checked only in a test host that withholds the same properties — so how its
+controls present, and whether a host offers the Transition context where
+expected, is untested; the Windows and Linux builds have never rendered a frame; and 16-bit
 images have never been fed to it.
 
 ## Status
@@ -239,7 +246,7 @@ that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
 Not done, and not pretended otherwise: no factory presets, the universal build has
-never run on an Intel Mac, and the OpenFX build has never been inside a real
+never run on an Intel Mac, and the OpenFX build has never rendered in a real
 OpenFX host (see [above](#openfx--resolve-vegas-nuke-natron)). The
 [browser demo](https://pilot-demo.stoatworks-labs.com) runs the plugin's own raster,
 attribute and compose shaders ported to WebGL2, and `demo/tools/check_shaders.py` holds

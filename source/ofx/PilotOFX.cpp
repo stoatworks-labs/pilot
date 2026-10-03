@@ -24,7 +24,12 @@
 /// frames, so a frame is a function of the controls and a time. OFX hands the
 /// time in FRAMES, and the border and Clip time sync want seconds, so it is
 /// divided by the output's frame rate -- which makes a frame render the same
-/// however the host reaches it.
+/// however the host reaches it. Resolve's Fusion page reports no frame rate
+/// at all, on the effect or on any clip, and the Support library throws when
+/// a property is missing; so the rate is read through framesPerSecond(),
+/// every read guarded, and falls back to 24, Resolve's timeline default. The
+/// other properties Fusion leaves out -- the frame range (reported as [0, 0]),
+/// the unmapped pair and the render-status pair -- this plugin never reads.
 ///
 /// --------------------------------------------------------- what is missing
 ///
@@ -118,7 +123,8 @@ constexpr const char* kPluginDescription =
 	"on Cut is the raw load from the first frame to the last.\n\n"
 	"Note: the Resolume build can also sync the load to the beat or the bar. "
 	"OpenFX hosts give a plugin no tempo, so those two Sync modes are absent "
-	"here rather than present and doing nothing.\n\n"
+	"here rather than present and doing nothing. Fusion reports no frame rate; "
+	"there, time-based controls (Clip time and the border) assume 24 fps.\n\n"
 	"https://stoatworks-labs.com";
 
 // Script names. Hosts save projects against these, so they are permanent.
@@ -184,9 +190,42 @@ render::View viewOf( const OFX::Image* image, bool premultiplied )
 	return view;
 }
 
+/// A host may leave a clip property out entirely -- Resolve's Fusion page
+/// does, for several -- and the Support library throws when one is missing.
+/// So every clip property this plugin reads goes through a guard, and a
+/// missing one is the safe answer, never an exception out of an action.
 bool isPremultiplied( OFX::Clip* clip )
 {
-	return clip == nullptr || clip->getPreMultiplication() != OFX::eImageUnPreMultiplied;
+	if( clip == nullptr )
+		return true;
+	try
+	{
+		return clip->getPreMultiplication() != OFX::eImageUnPreMultiplied;
+	}
+	catch( ... )
+	{
+		return true;//what the GPU is handed, and what an RGB clip is anyway
+	}
+}
+
+/// Resolve's timeline default, and what this plugin assumes when a host says
+/// nothing about time at all -- which Resolve's own Fusion page does.
+constexpr double kFallbackFramesPerSecond = 24.0;
+
+/// One clip's frame rate, or 0 when the host does not say.
+double clipFramesPerSecond( OFX::Clip* clip )
+{
+	if( clip == nullptr )
+		return 0.0;
+	try
+	{
+		const double fps = clip->getFrameRate();
+		return std::isfinite( fps ) && fps > 0.0 ? fps : 0.0;
+	}
+	catch( ... )
+	{
+		return 0.0;
+	}
 }
 
 //---------------------------------------------------------------------------
@@ -553,6 +592,32 @@ private:
 		return value;
 	}
 
+	/// Frames per second: the output clip's, else an input's, else the
+	/// effect's -- the first positive, finite one, each read guarded on its
+	/// own, because Resolve's Fusion page reports a frame rate on none of them
+	/// and the Support library throws on the read. 24 when nothing says, so a
+	/// frame there still renders, with the border and Clip time on a 24 fps
+	/// clock.
+	double framesPerSecond() const
+	{
+		for( OFX::Clip* clip : { dstClip, toClip, fromClip } )
+		{
+			const double fps = clipFramesPerSecond( clip );
+			if( fps > 0.0 )
+				return fps;
+		}
+		try
+		{
+			const double fps = getFrameRate();
+			if( std::isfinite( fps ) && fps > 0.0 )
+				return fps;
+		}
+		catch( ... )
+		{
+		}
+		return kFallbackFramesPerSecond;
+	}
+
 	render::Ends endsAt( double time ) const
 	{
 		return choice( ends, time ) == static_cast< int >( render::Ends::Cut ) ? render::Ends::Cut : render::Ends::Fade;
@@ -575,15 +640,8 @@ private:
 		host.mix         = static_cast< float >( mix->getValueAtTime( time ) );
 		host.background  = static_cast< float >( choice( background, time ) );
 
-		//OFX time is FRAMES. The border and Clip time want seconds, from the
-		//output's own rate, and a host that reports none -- some do, with
-		//nothing connected -- would otherwise divide by it.
-		double fps = dstClip->getFrameRate();
-		if( !( fps > 0.0 ) && toClip != nullptr )
-			fps = toClip->getFrameRate();
-		if( !( fps > 0.0 ) )
-			fps = 25.0;
-		const double seconds = time / fps;
+		//OFX time is FRAMES. The border and Clip time want seconds.
+		const double seconds = time / framesPerSecond();
 
 		float effective = 0.0f;
 		if( transition )

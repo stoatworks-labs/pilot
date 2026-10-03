@@ -22,8 +22,8 @@ one anybody chose.
 > are confirmed to change the picture. It has **never been loaded into Resolume
 > on macOS**, so how the controls *present* in the inspector is untested.
 > On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every control matching what the plugin declares — on software rendering, so that says nothing about a GPU.
-> The OpenFX build has been run only in a test host, **never in Resolve** or any
-> other real OpenFX application.
+> The OpenFX build has rendered only in a test host, **never yet in Resolve** or
+> any other real OpenFX application.
 > **Try it on a spare layer first**, and please report anything that misbehaves.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human
@@ -295,7 +295,7 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
 - **At the end of an error hold the picture jumps**, for one frame, to the
   retry's progress. A real machine drew the retry over the old picture.
 - **No factory presets.**
-- **The OpenFX build has never been run in Resolve**, Vegas, Nuke or Natron —
+- **The OpenFX build has never rendered in Resolve**, Vegas, Nuke or Natron —
   only in a command-line test host. How its controls present there, and how a
   host offers the transition and its Ends, are untested. It has no Beat or Bar
   sync.
@@ -351,6 +351,10 @@ What the OpenFX build does not have:
 
 - **Beat and Bar sync.** An OpenFX host does not give a plugin a tempo, so those
   two modes are not offered.
+
+**Fusion reports no frame rate; there, time-based controls assume 24 fps.** In
+Resolve's Fusion page, Clip time and the border's stripes run on a 24 fps clock;
+on the Edit and Color pages they follow the timeline's own rate.
 
 It renders on the CPU rather than the GPU — about 5 ms a frame at 1920×1080 on a
 16-thread Apple M4 Max, about 35 ms on a single thread — and the picture matches

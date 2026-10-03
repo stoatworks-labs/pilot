@@ -477,6 +477,51 @@ TRANSITION_PY
 					;;
 				*) printf '   skipped: this ofxprobe cannot host a Transition (no --context); OFXPROBE=<a probe that can> to render one\n' ;;
 			esac
+
+			# Resolve's Fusion page reports no frame rate at all, and an
+			# unguarded read throws out of the render (found in a real Resolve
+			# 21.1). A probe with --quirks fusion leaves the same properties out;
+			# under it the plugin must render, and render exactly what a host
+			# reporting 24 fps gets -- the fallback -- as a filter on Clip time
+			# (the border and the period both run on that clock) and as a Fade
+			# transition. Skipped with a probe that has no --quirks.
+			case "$help" in
+				*"--quirks"*)
+					tmp=$(mktemp -d)
+					quirk_ok=1
+					python3 -c "
+import sys
+W, H = 160, 90
+for path, k in ((sys.argv[1], 0), (sys.argv[2], 1)):
+    out = bytearray()
+    for y in range(H):
+        for x in range(W):
+            out += bytes(((x * 3 + y * k * 2) & 255, (y * 5) & 255, (200 if k else 60)))
+    open(path, 'wb').write(b'P6\\n%d %d\\n255\\n' % (W, H) + bytes(out))
+" "$tmp/in.ppm" "$tmp/to.ppm"
+					filter_args=( --in "$tmp/in.ppm" --set sync=1 --set progress=0.1 )
+					transition_args=( --context transition --from "$tmp/in.ppm" --to "$tmp/to.ppm" --transition 0.4 )
+					for name in filter transition; do
+						if [ "$name" = filter ]; then args=( "${filter_args[@]}" ); else args=( "${transition_args[@]}" ); fi
+						"$OFXPROBE" --no-system-dirs --dir "$BUILD" --render com.stoatworks.pilot "${args[@]}" \
+							--time 37 --quirks fusion --out-only "$tmp/quirk-$name.ppm" >"$tmp/quirk-$name.log" 2>&1 || quirk_ok=0
+						"$OFXPROBE" --no-system-dirs --dir "$BUILD" --render com.stoatworks.pilot "${args[@]}" \
+							--time 37 --frame-rate 24 --out-only "$tmp/at24-$name.ppm" >"$tmp/at24-$name.log" 2>&1 || quirk_ok=0
+						if ! cmp -s "$tmp/quirk-$name.ppm" "$tmp/at24-$name.ppm"; then
+							quirk_ok=0
+							printf '     %s: the Fusion render is not the 24 fps one\n' "$name"
+							tail -5 "$tmp/quirk-$name.log" | sed 's/^/       /'
+						fi
+					done
+					if [ "$quirk_ok" = 1 ]; then
+						pass "renders under Fusion's missing frame rate, as a filter and a transition, exactly as at 24 fps"
+					else
+						fail "the OpenFX plugin does not render under --quirks fusion as it does at 24 fps"
+					fi
+					rm -rf "$tmp"
+					;;
+				*) printf '   skipped: this ofxprobe has no --quirks; OFXPROBE=<a probe that has> to render as Fusion does\n' ;;
+			esac
 		fi
 	fi
 fi

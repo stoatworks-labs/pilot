@@ -455,8 +455,9 @@ Two things the table does not contain, and the absence is deliberate:
   a `frame Name value` cue sheet) was added on 2026-09-23 to film the video; it
   is a renderer, asserts nothing, and no check runs through it.
 - **Render cost figures are macOS-only.** Nothing has timed the Windows build.
-- **The OpenFX build has never been inside a real OpenFX host** — not Resolve,
-  Vegas, Nuke or Natron. See §9 for what has been checked and where.
+- **The OpenFX build has never rendered in a real OpenFX host** — not Resolve,
+  Vegas, Nuke or Natron. An earlier build failed on Resolve 21.1's Fusion page;
+  see §9 for the fix and for what has been checked and where.
 
 ## 6. Open questions
 
@@ -592,6 +593,29 @@ reformulated. OFX time is in frames; the border and Clip time take seconds as
 `time / output frame rate`. Clip time therefore runs along the host's timeline
 from its zero, and loops.
 
+**Fusion reports no frame rate; there, time-based controls assume 24 fps.**
+Found by the lead loading the port into DaVinci Resolve Studio 21.1 as a Fusion
+tool (MediaIn → Pilot → MediaOut): the render failed with "could not be
+processed successfully". A -DDEBUG Support library logged
+`PropertyUnknownToHost: OfxImageEffectPropFrameRate` out of the render action:
+Resolve's Fusion page sets no frame rate on the effect or any clip, and the
+Support library throws on a missing property. The Edit page does report one
+(24 on a 24 fps timeline). Every frame-rate read now goes through
+`framesPerSecond()` — the output clip, then the inputs, then the effect, each
+read in its own try/catch, the first positive finite value — and falls back to
+24, Resolve's timeline default. The premultiplication read is guarded the same
+way. Fusion's other gaps — a frame range of [0, 0], no unmapped pair, no
+render-status pair — are properties this plugin never reads. Checked in the test
+host's `--quirks fusion` mode, which leaves the same properties out: the build
+before the guard fails there with `kOfxStatErrMissingHostFeature` as a filter, as
+General and as a transition — the Resolve failure, reproduced — and the guarded
+build renders all four cases checked (filter on Clip time, General, a Fade
+ramp, the transition's middle) byte-identically to the same render in a host
+reporting 24 fps, and differently from 25, so the fallback is really what is
+used. Fade's ends are still the clips byte for byte under it. Outside the quirk
+every one of 133 earlier test-host renders is byte-identical to before the
+change. `verify.sh` renders the quirk when `OFXPROBE` names a probe that has it.
+
 **What is dropped: Beat and Bar.** An OpenFX host gives a plugin no tempo and no
 bar position. The Sync menu is Manual and Clip time, at the FFGL indices; the
 plugin description says the other two are FFGL-only.
@@ -675,9 +699,11 @@ stock probe instantiates the Filter context only, on its own ramp, at time 0):
   (6.3 ms on a Fade ramp, which renders the plain clip as well), and 4.6 ms on
   16 threads / 35 ms on one in `pttest --cpu-bench`.
 
-**Not verified:** never loaded into DaVinci Resolve, Vegas, Nuke or Natron — how
-the controls present, whether Resolve lists the transition, and how a real host
-drives `Transition`, are all untested. The Windows and Linux builds are compiled
+**Not verified:** never loaded into DaVinci Resolve, Vegas, Nuke or Natron by
+this session — how the controls present, whether Resolve lists the transition,
+and how a real host drives `Transition`, are all untested here. (The lead's run
+of the earlier build in Resolve 21.1 is what found the Fusion frame-rate
+failure above; the fix is verified only in the test host's Fusion quirk mode.) The Windows and Linux builds are compiled
 (and the Linux one dlopened on Rocky 8) by CI and have never rendered a frame.
 16-bit images have never been fed to it (the test host delivers 8-bit and float).
 
