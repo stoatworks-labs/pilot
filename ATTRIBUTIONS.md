@@ -68,6 +68,16 @@ Arrives inside the FFGL submodule, under the SDK's CustomThumbnail sample.
 
 Part of the upstream SDK tree rather than something these plugins call directly — listed because it is present in the checkout.
 
+### OpenFX image effect plug-in API
+
+<https://github.com/AcademySoftwareFoundation/openfx>  
+Licence: BSD-3-Clause  
+Copyright: OpenFX and contributors to the OpenFX project
+
+Vendored at external/openfx — a git submodule in resolume-ofx-bridge, a copy of the headers and Support library elsewhere.
+
+The plugin ABI for the DaVinci Resolve and Nuke side of the same effects, so one core renders through both hosts.
+
 ## Inspirations
 
 What this set out to be. No code, assets or binaries from any of these were used or examined — the debt is to the idea.
