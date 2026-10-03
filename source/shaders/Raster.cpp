@@ -15,6 +15,11 @@ namespace pilot::shaders
 /// clip to arrive, framed by the border, not a 4:3 window onto the middle of
 /// it. On a 16:9 composition a Spectrum pixel is therefore wider than it is
 /// tall, exactly as it was on a widescreen television in the 1980s.
+//= mirrored: Render.cpp RasterRows() -- the OpenFX build renders this pass on
+//  the CPU, statement for statement. Change one, change the other, then run
+//  `pttest --cpu`, which renders both and compares them. The marker sits out
+//  here rather than in the GLSL because demo/plugin.js carries the string
+//  character for character and demo/tools/check_shaders.py holds it to that.
 const char* const kRasterFragment = R"(#version 410 core
 uniform sampler2D InputTexture;
 uniform vec2 MaxUV;

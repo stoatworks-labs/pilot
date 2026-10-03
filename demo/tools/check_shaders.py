@@ -60,7 +60,8 @@ SHADERS = [
 def check_message(js):
     """The message string, its origin, and every glyph the page carries."""
     problems = 0
-    pilot = open(os.path.join(REPO, "source", "Pilot.cpp")).read()
+    # Frame.h since the OpenFX port: both builds draw the message from there.
+    pilot = open(os.path.join(REPO, "source", "Frame.h")).read()
     font = open(os.path.join(REPO, "source", "Font.cpp")).read()
 
     for what, cpp_pattern, js_pattern in [

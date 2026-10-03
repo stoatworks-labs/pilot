@@ -40,22 +40,6 @@ static CFFGLPluginInfo PluginInfo(
 
 namespace
 {
-/// The loading-error report a Spectrum gives when a block will not read. The
-/// text is the machine's own; the font is a 5x7 bitmap, so the message is an
-/// exact arrangement of whole Spectrum pixels at every output size.
-constexpr const char* kErrorMessage = "R Tape loading error, 0:1";
-
-/// Where the message sits, in Spectrum pixels with y from the top. The bottom
-/// character row, inset a few pixels from the left, which is roughly where a
-/// Spectrum puts its reports.
-constexpr int kMessageX = 4;
-constexpr int kMessageY = 184;
-
-int messageWidth()
-{
-	return static_cast< int >( std::strlen( kErrorMessage ) ) * pilot::font::kAdvance;
-}
-
 /// glGetString returns nullptr when there is no current context, and feeding
 /// that to std::string is undefined behaviour. A logging call must never be the
 /// thing that brings the host down.
@@ -83,30 +67,27 @@ Pilot::Pilot() :
 
 	//---------------------------------------------------------------------
 	// Defaults: a tape already part way through, with the border running.
-	//
-	// An effect that does nothing until four sliders are moved is an effect
-	// nobody finds out is any good, so the first frame is a recognisable
-	// half-loaded Spectrum screen rather than the clip untouched. Error Rate
-	// defaults to nothing, because a machine that is failing before anyone has
-	// touched a slider is a machine nobody trusts.
+	// They live in Frame.h, where the reasons are, because the OpenFX build
+	// declares its parameters from the same struct.
 	//---------------------------------------------------------------------
-	params[ PT_TYPE ]         = 0.0f;//ZX 48
-	params[ PT_BAUD ]         = 0.5f;//the machine's own rate
-	params[ PT_INK ]          = 0.0f;//Black
-	params[ PT_PAPER ]        = 7.0f;//White — a Spectrum powers up black on white
-	params[ PT_BRIGHT ]       = 1.0f;//Auto
+	const frame::HostValues defaults;
+	params[ PT_TYPE ]         = defaults.type;
+	params[ PT_BAUD ]         = defaults.baud;
+	params[ PT_INK ]          = defaults.ink;
+	params[ PT_PAPER ]        = defaults.paper;
+	params[ PT_BRIGHT ]       = defaults.bright;
 
-	params[ PT_PROGRESS ]     = 0.45f;
-	params[ PT_SYNC ]         = 0.0f;//Manual
-	params[ PT_ERROR_RATE ]   = 0.0f;
-	params[ PT_MESSAGE ]      = 1.0f;
+	params[ PT_PROGRESS ]     = defaults.progress;
+	params[ PT_SYNC ]         = defaults.sync;
+	params[ PT_ERROR_RATE ]   = defaults.errorRate;
+	params[ PT_MESSAGE ]      = defaults.message;
 
-	params[ PT_BORDER_ON ]    = 1.0f;
-	params[ PT_BORDER_WIDTH ] = 0.32f;//~8% of the picture off each edge
-	params[ PT_PILOT_LENGTH ] = 0.16f;//~8% of the Progress range
+	params[ PT_BORDER_ON ]    = defaults.borderOn;
+	params[ PT_BORDER_WIDTH ] = defaults.borderWidth;
+	params[ PT_PILOT_LENGTH ] = defaults.pilotLength;
 
-	params[ PT_MIX ]          = 1.0f;
-	params[ PT_BACKGROUND ]   = 0.0f;//Paper
+	params[ PT_MIX ]          = defaults.mix;
+	params[ PT_BACKGROUND ]   = defaults.background;
 
 	//---------------------------------------------------------------------
 	// Declaration. Grouped the way Resolume shows them: what the machine is,
@@ -250,6 +231,26 @@ double Pilot::elapsedSeconds()
 	return clockScale != 0.0 ? raw * clockScale : wallNow;
 }
 
+pilot::frame::HostValues Pilot::hostValues() const
+{
+	frame::HostValues host;
+	host.type        = params[ PT_TYPE ];
+	host.baud        = params[ PT_BAUD ];
+	host.ink         = params[ PT_INK ];
+	host.paper       = params[ PT_PAPER ];
+	host.bright      = params[ PT_BRIGHT ];
+	host.progress    = params[ PT_PROGRESS ];
+	host.sync        = params[ PT_SYNC ];
+	host.errorRate   = params[ PT_ERROR_RATE ];
+	host.message     = params[ PT_MESSAGE ];
+	host.borderOn    = params[ PT_BORDER_ON ];
+	host.borderWidth = params[ PT_BORDER_WIDTH ];
+	host.pilotLength = params[ PT_PILOT_LENGTH ];
+	host.mix         = params[ PT_MIX ];
+	host.background  = params[ PT_BACKGROUND ];
+	return host;
+}
+
 float Pilot::effectiveProgress( double seconds ) const
 {
 	const float manual = std::clamp( params[ PT_PROGRESS ], 0.0f, 1.0f );
@@ -260,47 +261,31 @@ float Pilot::effectiveProgress( double seconds ) const
 
 	//Progress stays live in every mode: it is the offset the clock is added to,
 	//so an operator can still place the load where they want it inside the bar.
-	double turns = 0.0;
-
+	//Clip time is shared with the OpenFX build, which has a timeline and no
+	//beat, so it lives in Frame.cpp.
 	if( mode == kSyncClip )
-	{
-		const MachineSpec& spec = machine( static_cast< int >( std::lround( params[ PT_TYPE ] ) ) );
-		const double baud       = controls::Baud( spec.nominalBaud, params[ PT_BAUD ] );
-		const double period     = controls::TapeSeconds( baud, controls::PilotLength( params[ PT_PILOT_LENGTH ] ) );
-		turns                   = seconds / std::max( period, 0.001 );
-	}
-	else
-	{
-		//The host gives a tempo and a position within the current bar, never
-		//which bar it is. Recover a continuous count without keeping state: the
-		//clock estimates how many bars have passed, barPhase is the exact
-		//position inside this one, and the whole number reconciling them is
-		//round( estimate - barPhase ). Continuous across the bar line, because
-		//as barPhase wraps from 1 to 0 the rounded integer steps up at the same
-		//instant. The same recovery the rest of the fleet uses.
-		const double tempo      = bpm > 1.0f ? static_cast< double >( bpm ) : 120.0;
-		const double barSeconds = ( 60.0 * kBeatsPerBar ) / tempo;
-		const double estimate   = seconds / barSeconds;
-		const double within     = std::clamp( static_cast< double >( barPhase ), 0.0, 1.0 );
-		const double bars       = within + std::round( estimate - within );
+		return frame::ClipTimeProgress( hostValues(), seconds );
 
-		turns = mode == kSyncBeat ? bars * kBeatsPerBar : bars;
-	}
+	//The host gives a tempo and a position within the current bar, never which
+	//bar it is. Recover a continuous count without keeping state: the clock
+	//estimates how many bars have passed, barPhase is the exact position inside
+	//this one, and the whole number reconciling them is round( estimate -
+	//barPhase ). Continuous across the bar line, because as barPhase wraps from
+	//1 to 0 the rounded integer steps up at the same instant. The same recovery
+	//the rest of the fleet uses.
+	const double tempo      = bpm > 1.0f ? static_cast< double >( bpm ) : 120.0;
+	const double barSeconds = ( 60.0 * kBeatsPerBar ) / tempo;
+	const double estimate   = seconds / barSeconds;
+	const double within     = std::clamp( static_cast< double >( barPhase ), 0.0, 1.0 );
+	const double bars       = within + std::round( estimate - within );
 
-	//Wrapped with floor, not a cast: a cast truncates toward zero, so a host
-	//reporting a negative transport position -- which is a scrub backwards, and
-	//operators do that constantly -- would run the load the wrong way.
-	const double raw = static_cast< double >( manual ) + turns;
-	return static_cast< float >( raw - std::floor( raw ) );
+	const double turns = mode == kSyncBeat ? bars * kBeatsPerBar : bars;
+	return frame::Wrap( static_cast< double >( manual ) + turns );
 }
 
 pilot::load::State Pilot::TapeStateForTest()
 {
-	load::Settings settings;
-	settings.progress    = effectiveProgress( elapsedSeconds() );
-	settings.pilotLength = controls::PilotLength( params[ PT_PILOT_LENGTH ] );
-	settings.errorRate   = controls::ErrorRate( params[ PT_ERROR_RATE ] );
-	return load::Evaluate( settings );
+	return frame::Tape( hostValues(), effectiveProgress( elapsedSeconds() ) );
 }
 
 float Pilot::EffectiveProgressForTest()
@@ -310,17 +295,32 @@ float Pilot::EffectiveProgressForTest()
 
 pilot::load::Border Pilot::BorderForTest()
 {
-	const MachineSpec& spec = machine( static_cast< int >( std::lround( params[ PT_TYPE ] ) ) );
-	const double baud       = controls::Baud( spec.nominalBaud, params[ PT_BAUD ] );
-	return load::BorderAt( elapsedSeconds(), baud, spec.frameHz );
+	return frame::Border( hostValues(), elapsedSeconds() );
 }
 
 void Pilot::MessageBoxForTest( int& x, int& y, int& w, int& h )
 {
-	x = kMessageX;
-	y = kMessageY;
-	w = messageWidth();
+	x = frame::kMessageX;
+	y = frame::kMessageY;
+	w = frame::MessageWidth();
 	h = font::kHeight;
+}
+
+bool Pilot::PassesForTest( std::vector< unsigned char >& raster, std::vector< float >& attributes )
+{
+	if( !rasterBuffer.IsValid() || !attrBuffer.IsValid() )
+		return false;
+
+	raster.assign( static_cast< size_t >( zx::kScreenW ) * zx::kScreenH * 4, 0 );
+	attributes.assign( static_cast< size_t >( zx::kCellsX ) * zx::kCellsY * 4, 0.0f );
+
+	glPixelStorei( GL_PACK_ALIGNMENT, 1 );
+	glBindTexture( GL_TEXTURE_2D, rasterBuffer.GetTextureInfo().Handle );
+	glGetTexImage( GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, raster.data() );
+	glBindTexture( GL_TEXTURE_2D, attrBuffer.GetTextureInfo().Handle );
+	glGetTexImage( GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, attributes.data() );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	return glGetError() == GL_NO_ERROR;
 }
 
 //---------------------------------------------------------------------------
@@ -357,21 +357,18 @@ bool Pilot::compileShaders()
 
 bool Pilot::buildMessageTexture()
 {
-	const int w = messageWidth();
+	const int w = frame::MessageWidth();
 	const int h = font::kHeight;
 
 	//One byte per pixel, row 0 the TOP row of the glyphs. The compose pass
 	//fetches it with the Spectrum's own top-down y, so uploading it this way up
 	//is what keeps the flip count at the two already documented in the shader.
+	//frame::MessageBit is the same bitmap the OpenFX build reads directly.
 	std::vector< unsigned char > bitmap( static_cast< size_t >( w ) * h, 0 );
-	for( int c = 0; kErrorMessage[ c ] != '\0'; ++c )
-	{
-		const int code = static_cast< unsigned char >( kErrorMessage[ c ] );
-		for( int y = 0; y < font::kHeight; ++y )
-			for( int x = 0; x < font::kWidth; ++x )
-				if( font::Bit( code, x, y ) )
-					bitmap[ static_cast< size_t >( y ) * w + c * font::kAdvance + x ] = 255;
-	}
+	for( int y = 0; y < h; ++y )
+		for( int x = 0; x < w; ++x )
+			if( frame::MessageBit( x, y ) )
+				bitmap[ static_cast< size_t >( y ) * w + x ] = 255;
 
 	glGenTextures( 1, &messageTexture );
 	if( messageTexture == 0 )
@@ -452,16 +449,10 @@ FFResult Pilot::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		return FF_FAIL;
 	}
 
-	const int typeIndex     = static_cast< int >( std::lround( params[ PT_TYPE ] ) );
-	const MachineSpec& spec = machine( typeIndex );
-	const double baud       = controls::Baud( spec.nominalBaud, params[ PT_BAUD ] );
-	const double seconds    = elapsedSeconds();
-
-	load::Settings settings;
-	settings.progress    = effectiveProgress( seconds );
-	settings.pilotLength = controls::PilotLength( params[ PT_PILOT_LENGTH ] );
-	settings.errorRate   = controls::ErrorRate( params[ PT_ERROR_RATE ] );
-	const load::State tape = load::Evaluate( settings );
+	//Every decision this frame makes on the CPU, made once in Frame.cpp -- the
+	//same function the OpenFX build calls -- and handed to the passes below.
+	const double seconds     = elapsedSeconds();
+	const frame::Uniforms u  = frame::Prepare( hostValues(), effectiveProgress( seconds ), seconds );
 
 	//------------------------------------------------------------------
 	// 1. The clip, down onto 256x192.
@@ -493,7 +484,7 @@ FFResult Pilot::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 		attrShader.Set( "RasterTexture", 0 );
 		attrShader.Set( "MaxUV", 1.0f, 1.0f );
-		attrShader.Set( "BrightMode", static_cast< int >( std::lround( params[ PT_BRIGHT ] ) ) );
+		attrShader.Set( "BrightMode", u.brightMode );
 		quad.Draw();
 	}
 
@@ -524,62 +515,25 @@ FFResult Pilot::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		composeShader.Set( "MaxUV", 1.0f, 1.0f );
 		composeShader.Set( "InputMaxUV", maxCoords.s, maxCoords.t );
 
-		//Border Off is not a colour, it is the absence of a border: the screen
-		//fills the composition and there is no region left to paint.
-		const float inset = params[ PT_BORDER_ON ] > 0.5f
-		                        ? controls::BorderInset( params[ PT_BORDER_WIDTH ] )
-		                        : 0.0f;
-		composeShader.Set( "Inset", inset, inset );
+		composeShader.Set( "Inset", u.inset, u.inset );
+		composeShader.Set( "BytesRevealed", u.bytesRevealed );
+		composeShader.Set( "DefaultInk", u.defaultInk[ 0 ], u.defaultInk[ 1 ], u.defaultInk[ 2 ] );
+		composeShader.Set( "DefaultPaper", u.defaultPaper[ 0 ], u.defaultPaper[ 1 ], u.defaultPaper[ 2 ] );
 
-		composeShader.Set( "BytesRevealed", tape.bytesRevealed );
+		//The border's phase arrives already reduced to [0, 2); see Frame.cpp
+		//for why that has to happen in double, before the shader sees it.
+		composeShader.Set( "BorderStyle", u.borderStyle );
+		composeShader.Set( "BorderHalfPhase", u.borderHalfPhase );
+		composeShader.Set( "BorderHalfSpan", u.borderHalfSpan );
+		composeShader.Set( "BorderA", u.borderA[ 0 ], u.borderA[ 1 ], u.borderA[ 2 ] );
+		composeShader.Set( "BorderB", u.borderB[ 0 ], u.borderB[ 1 ], u.borderB[ 2 ] );
 
-		const bool defaultBright = static_cast< int >( std::lround( params[ PT_BRIGHT ] ) ) == 2;
-		const zx::Rgb ink        = zx::Colour( static_cast< int >( std::lround( params[ PT_INK ] ) ), defaultBright );
-		const zx::Rgb paper      = zx::Colour( static_cast< int >( std::lround( params[ PT_PAPER ] ) ), defaultBright );
-		composeShader.Set( "DefaultInk", ink.r / 255.0f, ink.g / 255.0f, ink.b / 255.0f );
-		composeShader.Set( "DefaultPaper", paper.r / 255.0f, paper.g / 255.0f, paper.b / 255.0f );
+		composeShader.Set( "MessageOn", u.messageOn ? 1 : 0 );
+		composeShader.Set( "MessageOrigin", float( frame::kMessageX ), float( frame::kMessageY ) );
+		composeShader.Set( "MessageSize", float( frame::MessageWidth() ), float( font::kHeight ) );
 
-		//------------------------------------------------------------------
-		// The border.
-		//
-		// The phase is reduced to [0, 2) HERE, in double, before anything
-		// reaches the shader: the parity of a half-cycle count survives being
-		// taken modulo two, and what the shader then sees is a small number
-		// whatever the host's clock says. Handing it `seconds * baud * 2` would
-		// hand it 1.5e9 after a day of uptime, where a float's step is 128.
-		//------------------------------------------------------------------
-		const load::Border border = load::BorderAt( seconds, baud, spec.frameHz );
-		const double halfTop      = load::HalfCycleContinuous( border, 0.0 );
-		double reduced            = std::fmod( halfTop, 2.0 );
-		if( reduced < 0.0 )
-			reduced += 2.0;
-
-		composeShader.Set( "BorderStyle", spec.border == kBorderFlash ? 1 : 0 );
-		composeShader.Set( "BorderHalfPhase", static_cast< float >( reduced ) );
-		composeShader.Set( "BorderHalfSpan", static_cast< float >( border.bitsPerFrame * 2.0 ) );
-
-		int colourA = tape.pilot ? spec.pilotA : spec.dataA;
-		int colourB = tape.pilot ? spec.pilotB : spec.dataB;
-		if( spec.border == kBorderFlash )
-		{
-			//One colour for the whole border, changed once per byte. There is
-			//no row dependence at all, which is what makes it read as a flicker
-			//rather than as stripes.
-			colourA = load::FlashColour( load::ByteIndex( border ) );
-			colourB = colourA;
-		}
-		const zx::Rgb a = zx::Colour( colourA, spec.bright );
-		const zx::Rgb b = zx::Colour( colourB, spec.bright );
-		composeShader.Set( "BorderA", a.r / 255.0f, a.g / 255.0f, a.b / 255.0f );
-		composeShader.Set( "BorderB", b.r / 255.0f, b.g / 255.0f, b.b / 255.0f );
-
-		const bool showMessage = params[ PT_MESSAGE ] > 0.5f && tape.message;
-		composeShader.Set( "MessageOn", showMessage ? 1 : 0 );
-		composeShader.Set( "MessageOrigin", float( kMessageX ), float( kMessageY ) );
-		composeShader.Set( "MessageSize", float( messageWidth() ), float( font::kHeight ) );
-
-		composeShader.Set( "Background", static_cast< int >( std::lround( params[ PT_BACKGROUND ] ) ) );
-		composeShader.Set( "Mix", std::clamp( params[ PT_MIX ], 0.0f, 1.0f ) );
+		composeShader.Set( "Background", u.background );
+		composeShader.Set( "Mix", u.mix );
 
 		quad.Draw();
 

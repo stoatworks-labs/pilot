@@ -43,6 +43,45 @@ endif()
 
 option(PILOT_BUILD_TOOLS "Build the offline render and measurement harness" ON)
 
+# The FFGL plugin, the FFGL SDK submodule and GLEW are one dependency group, and
+# the OpenFX plugin belongs to none of it. Turning this OFF builds the OFX plugin
+# alone, with no GL loader anywhere in the configure -- which is what the Linux
+# job does, because the FFGL SDK has no Linux path and GLEW would otherwise have
+# to be installed to build something that never calls it. The harness drives the
+# FFGL class, so it goes with this too.
+option(PILOT_BUILD_FFGL "Build the FFGL plugin (needs the FFGL SDK and, off macOS, GLEW)" ON)
+
+# ---------------------------------------------------------------------------
+# The parts with no GL in them at all: the address order, the tape, the
+# machines, the controls, the font, one frame's uniforms (Frame.cpp) and the
+# CPU copy of the three passes (Render.cpp).
+#
+# A separate library because all three consumers need it and only one has a GL
+# context: the FFGL plugin, the harness, and the OpenFX plugin, which renders on
+# the CPU and is built on Linux with no GL loader configured at all. This split
+# is what lets the OpenFX build link the SAME arithmetic rather than a second
+# transcription of it.
+# ---------------------------------------------------------------------------
+add_library(pilot_model OBJECT
+    source/Font.h
+    source/Font.cpp
+    source/Spectrum.h
+    source/Spectrum.cpp
+    source/Machines.h
+    source/Machines.cpp
+    source/Loader.h
+    source/Loader.cpp
+    source/Controls.h
+    source/Frame.h
+    source/Frame.cpp
+    source/Render.h
+    source/Render.cpp
+)
+target_include_directories(pilot_model PUBLIC source)
+set_target_properties(pilot_model PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(PILOT_BUILD_FFGL)
+
 # ---------------------------------------------------------------------------
 # The Resolume FFGL SDK, as a git submodule pinned to b1afaf9 -- the rev the
 # rest of the fleet pins.
@@ -56,8 +95,8 @@ set(FFGL_BUILD_EXAMPLE_PLUGINS OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/ffgl EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
-# Everything the plugin is, as an OBJECT library so both the bundle and the
-# offline harness are built from exactly the same code.
+# Everything the FFGL plugin is beyond the model, as an OBJECT library so both
+# the bundle and the offline harness are built from exactly the same code.
 #
 # OBJECT and not STATIC on purpose. `CFFGLPluginInfo` registers itself from a
 # file-scope constructor in Pilot.cpp and nothing ever references that object by
@@ -70,15 +109,6 @@ add_library(pilot_core OBJECT
     source/Diag.cpp
     source/PassBuffer.h
     source/PassBuffer.cpp
-    source/Font.h
-    source/Font.cpp
-    source/Spectrum.h
-    source/Spectrum.cpp
-    source/Machines.h
-    source/Machines.cpp
-    source/Loader.h
-    source/Loader.cpp
-    source/Controls.h
     source/StoatworksAbout.h
     source/StoatworksAboutLinks.h
     source/StoatworksAboutParams.h
@@ -92,7 +122,7 @@ add_library(pilot_core OBJECT
 )
 
 target_include_directories(pilot_core PUBLIC source)
-target_link_libraries(pilot_core PUBLIC ffgl::sdk)
+target_link_libraries(pilot_core PUBLIC ffgl::sdk pilot_model)
 target_compile_definitions(pilot_core PUBLIC PILOT_VERSION="${PROJECT_VERSION}")
 set_target_properties(pilot_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -112,7 +142,12 @@ endif()
 # ---------------------------------------------------------------------------
 function(pilot_add_plugin target entry bundle_name identifier)
     add_library(${target} MODULE ${entry})
-    target_link_libraries(${target} PRIVATE pilot_core)
+    # pilot_model is named again here, and on every other final target, because
+    # an OBJECT library's objects do NOT travel transitively through a second
+    # OBJECT library. pilot_core linking it gives this target the include paths
+    # and nothing to link, and the failure is a pile of undefined symbols at the
+    # very last step of an otherwise clean build.
+    target_link_libraries(${target} PRIVATE pilot_core pilot_model)
 
     if(APPLE)
         set_target_properties(${target} PROPERTIES
@@ -153,7 +188,7 @@ if(PILOT_BUILD_TOOLS AND APPLE)
     add_executable(pttest tools/pttest/main.cpp)
     # zlib ships with the OS, which is why the PNG writer is fifty lines here
     # rather than a vendored dependency.
-    target_link_libraries(pttest PRIVATE pilot_core z
+    target_link_libraries(pttest PRIVATE pilot_core pilot_model z
         "-framework OpenGL"
         "-framework AppKit"
     )
@@ -170,6 +205,8 @@ if(PILOT_BUILD_TOOLS AND APPLE)
     add_test(NAME negative   COMMAND pttest --negative)
     add_test(NAME reveal     COMMAND pttest --reveal)
     add_test(NAME pixels     COMMAND pttest --pixels)
+    add_test(NAME cpu        COMMAND pttest --cpu)
+    add_test(NAME transition COMMAND pttest --transition)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -184,3 +221,5 @@ install(TARGETS Pilot
     LIBRARY DESTINATION "."
     BUNDLE  DESTINATION "."
 )
+
+endif()  # PILOT_BUILD_FFGL

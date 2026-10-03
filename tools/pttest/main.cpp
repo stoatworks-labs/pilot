@@ -32,6 +32,16 @@
 		pttest --agree --order --thirds --attributes --border --error
 		pttest --reveal --pixels --bench
 
+	`--cpu` and `--transition` hold the OpenFX build to the GPU: the same
+	picture through `source/Render.cpp` -- the CPU copy of the three passes the
+	OpenFX plugin renders with -- and through the shaders, compared pixel for
+	pixel at two rasters, each with a control that must disagree. The OpenFX
+	transition has no FFGL twin, so `--transition` builds what it must be from
+	the GPU's own frames (see runTransition).
+
+		pttest --cpu --transition
+		pttest --cpu-bench
+
 	`--pipe` takes the fleet's frame format, so one filming script can drive
 	any of the FFGL plugins. It is a renderer, not a check: it asserts nothing
 	and touches no other mode.
@@ -45,8 +55,10 @@
 
 #include "Controls.h"
 #include "Font.h"
+#include "Frame.h"
 #include "Loader.h"
 #include "Machines.h"
+#include "Render.h"
 #include "Spectrum.h"
 
 #include <OpenGL/OpenGL.h>
@@ -54,6 +66,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -64,6 +77,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <unistd.h>
@@ -305,6 +319,28 @@ std::vector< unsigned char > buildCard( int w, int h )
 		}
 	}
 
+	return image;
+}
+
+/// ofxprobe's own input: R = 4x and G = 8y, both wrapping at 256, with y
+/// counted from the BOTTOM (OpenFX's order), B = 128. Hard edges every 64
+/// columns and 32 rows, which is exactly what lands raster samples on
+/// decision boundaries. `--cpu` runs on it as well as on the card so the
+/// probe's renders of the OpenFX bundle are covered by the same classifier.
+std::vector< unsigned char > buildProbeRamp( int w, int h )
+{
+	std::vector< unsigned char > image( static_cast< size_t >( w ) * h * 4, 0 );
+	for( int y = 0; y < h; ++y )//GL row, bottom first: no flip, unlike setPixel
+	{
+		for( int x = 0; x < w; ++x )
+		{
+			unsigned char* p = image.data() + ( static_cast< size_t >( y ) * w + x ) * 4;
+			p[ 0 ]           = static_cast< unsigned char >( x * 4 );
+			p[ 1 ]           = static_cast< unsigned char >( y * 8 );
+			p[ 2 ]           = 128;
+			p[ 3 ]           = 255;
+		}
+	}
 	return image;
 }
 
@@ -1721,6 +1757,775 @@ int runBench( int frames )
 	return 0;
 }
 
+//===========================================================================
+// The OpenFX build's renderer, against the GPU.
+//
+// The OpenFX plugin renders with source/Render.cpp, the marked CPU copy of the
+// three passes, from the same frame::Uniforms the FFGL build hands its
+// shaders. These checks put the same picture through both and compare the
+// frames pixel for pixel. They are the only thing that holds the two copies
+// of the GLSL together, so they run at two rasters like the other rendering
+// checks, and each carries a control that MUST disagree, so a comparison that
+// has quietly stopped comparing anything cannot pass.
+//===========================================================================
+
+/// The controls, pushed into a plugin instance by id.
+void applyHost( Instance& i, const frame::HostValues& h )
+{
+	i.set( Pilot::PT_TYPE, h.type );
+	i.set( Pilot::PT_BAUD, h.baud );
+	i.set( Pilot::PT_INK, h.ink );
+	i.set( Pilot::PT_PAPER, h.paper );
+	i.set( Pilot::PT_BRIGHT, h.bright );
+	i.set( Pilot::PT_PROGRESS, h.progress );
+	i.set( Pilot::PT_SYNC, h.sync );
+	i.set( Pilot::PT_ERROR_RATE, h.errorRate );
+	i.set( Pilot::PT_MESSAGE, h.message );
+	i.set( Pilot::PT_BORDER_ON, h.borderOn );
+	i.set( Pilot::PT_BORDER_WIDTH, h.borderWidth );
+	i.set( Pilot::PT_PILOT_LENGTH, h.pilotLength );
+	i.set( Pilot::PT_MIX, h.mix );
+	i.set( Pilot::PT_BACKGROUND, h.background );
+}
+
+/// A test picture as Render.cpp reads a host image. The pictures are already
+/// stored bottom row first, which is both GL's order and OpenFX's.
+render::View viewOf( const std::vector< unsigned char >& picture, int w, int h )
+{
+	render::View v;
+	v.base          = picture.data();
+	v.rowBytes      = static_cast< std::ptrdiff_t >( w ) * 4;
+	v.width         = w;
+	v.height        = h;
+	v.components    = 4;
+	v.depth         = render::Depth::U8;
+	v.premultiplied = true;
+	return v;
+}
+
+/// The controls a plugin instance holds, as Frame.cpp takes them.
+frame::HostValues hostOf( Pilot& plugin )
+{
+	frame::HostValues h;
+	h.type        = plugin.GetFloatParameter( Pilot::PT_TYPE );
+	h.baud        = plugin.GetFloatParameter( Pilot::PT_BAUD );
+	h.ink         = plugin.GetFloatParameter( Pilot::PT_INK );
+	h.paper       = plugin.GetFloatParameter( Pilot::PT_PAPER );
+	h.bright      = plugin.GetFloatParameter( Pilot::PT_BRIGHT );
+	h.progress    = plugin.GetFloatParameter( Pilot::PT_PROGRESS );
+	h.sync        = plugin.GetFloatParameter( Pilot::PT_SYNC );
+	h.errorRate   = plugin.GetFloatParameter( Pilot::PT_ERROR_RATE );
+	h.message     = plugin.GetFloatParameter( Pilot::PT_MESSAGE );
+	h.borderOn    = plugin.GetFloatParameter( Pilot::PT_BORDER_ON );
+	h.borderWidth = plugin.GetFloatParameter( Pilot::PT_BORDER_WIDTH );
+	h.pilotLength = plugin.GetFloatParameter( Pilot::PT_PILOT_LENGTH );
+	h.mix         = plugin.GetFloatParameter( Pilot::PT_MIX );
+	h.background  = plugin.GetFloatParameter( Pilot::PT_BACKGROUND );
+	return h;
+}
+
+/// The progress the OpenFX filter would compute: Manual or Clip time. The
+/// beat modes are FFGL-only and no case here uses them.
+float ofxProgress( const frame::HostValues& h, double seconds )
+{
+	return static_cast< int >( std::lround( h.sync ) ) == Pilot::kSyncClip
+	           ? frame::ClipTimeProgress( h, seconds )
+	           : std::clamp( h.progress, 0.0f, 1.0f );
+}
+
+/// A float frame from Render.cpp (premultiplied, bottom row first) as the
+/// eight-bit, top-row-first Image the GPU readback gives.
+Image fromFloat( const std::vector< float >& frame, int w, int h )
+{
+	Image out;
+	out.w = w;
+	out.h = h;
+	out.px.resize( static_cast< size_t >( w ) * h * 4 );
+	for( int y = 0; y < h; ++y )
+	{
+		const float* src   = frame.data() + static_cast< size_t >( h - 1 - y ) * w * 4;
+		unsigned char* dst = out.px.data() + static_cast< size_t >( y ) * w * 4;
+		for( int k = 0; k < w * 4; ++k )
+			dst[ k ] = static_cast< unsigned char >( std::lround( std::clamp( src[ k ], 0.0f, 1.0f ) * 255.0f ) );
+	}
+	return out;
+}
+
+/// The CPU frame for one set of controls.
+Image cpuFrame( const frame::HostValues& h, double seconds, const std::vector< unsigned char >& picture, int w, int hgt )
+{
+	const frame::Uniforms u = frame::Prepare( h, ofxProgress( h, seconds ), seconds );
+	std::vector< float > out( static_cast< size_t >( w ) * hgt * 4 );
+	const render::View view = viewOf( picture, w, hgt );
+	render::Frame( u, view, view, w, hgt, out.data() );
+	return fromFloat( out, w, hgt );
+}
+
+struct FrameDiff
+{
+	long long pixels = 0;///< pixels with any channel different
+	int worst        = 0;///< the largest channel difference, of 255
+};
+
+FrameDiff compareFrames( const Image& a, const Image& b )
+{
+	FrameDiff d;
+	for( size_t p = 0; p + 3 < a.px.size(); p += 4 )
+	{
+		int worst = 0;
+		for( int c = 0; c < 4; ++c )
+			worst = std::max( worst, std::abs( int( a.px[ p + c ] ) - int( b.px[ p + c ] ) ) );
+		if( worst > 0 )
+			++d.pixels;
+		d.worst = std::max( d.worst, worst );
+	}
+	return d;
+}
+
+/// PTTEST_DUMP=<dir> writes each case's two frames and a map of where they
+/// differ, for when a count is not enough to see what moved.
+void dumpPair( const std::string& name, const Image& gpu, const Image& cpu )
+{
+	const char* dir = std::getenv( "PTTEST_DUMP" );
+	if( dir == nullptr || *dir == '\0' )
+		return;
+
+	std::string stem;
+	for( char ch : name )
+		stem += std::isalnum( static_cast< unsigned char >( ch ) ) ? ch : '_';
+	stem = std::string( dir ) + "/" + std::to_string( gpu.w ) + "x" + std::to_string( gpu.h ) + "-" + stem;
+
+	Image diff = gpu;
+	for( size_t p = 0; p + 3 < diff.px.size(); p += 4 )
+	{
+		const bool same = std::memcmp( gpu.px.data() + p, cpu.px.data() + p, 4 ) == 0;
+		diff.px[ p + 0 ] = same ? 0 : 255;
+		diff.px[ p + 1 ] = same ? gpu.px[ p + 1 ] / 4 : 0;
+		diff.px[ p + 2 ] = same ? 0 : 255;
+		diff.px[ p + 3 ] = 255;
+	}
+	writePng( stem + "-gpu.png", gpu.w, gpu.h, gpu.px );
+	writePng( stem + "-cpu.png", cpu.w, cpu.h, cpu.px );
+	writePng( stem + "-diff.png", diff.w, diff.h, diff.px );
+}
+
+/// One configuration of the controls, at an instant.
+struct CpuCase
+{
+	const char* name;
+	frame::HostValues host;
+	double seconds;
+};
+
+/// The instants are frames of a 25 fps timeline, so the OpenFX test host can
+/// be asked for exactly the same ones (`--frame-rate 25 --time N`): the
+/// bundle's frames then line up with these case for case.
+std::vector< CpuCase > cpuCases()
+{
+	std::vector< CpuCase > cases;
+	auto add = [ &cases ]( const char* name, int frame25, auto edit ) {
+		frame::HostValues h;
+		edit( h );
+		cases.push_back( { name, h, frame25 / 25.0 } );
+	};
+
+	add( "defaults", 2, []( frame::HostValues& ) {} );
+	add( "pilot tone (Progress 0.1)", 9, []( frame::HostValues& h ) { h.progress = 0.1f; } );
+	add( "first third (Progress 0.3)", 27, []( frame::HostValues& h ) { h.progress = 0.3f; } );
+	add( "colour arriving, Bright On, blue on yellow", 6, []( frame::HostValues& h ) {
+		h.progress = 0.95f;
+		h.bright   = 2.0f;
+		h.ink      = 1.0f;
+		h.paper    = 6.0f;
+	} );
+	add( "whole tape, Bright Off, Border Off", 12, []( frame::HostValues& h ) {
+		h.progress = 1.0f;
+		h.bright   = 0.0f;
+		h.borderOn = 0.0f;
+	} );
+	add( "Background Clip, Mix 0.5", 21, []( frame::HostValues& h ) {
+		h.progress   = 0.6f;
+		h.background = float( Pilot::kBackgroundClip );
+		h.mix        = 0.5f;
+	} );
+	add( "Background Black, ZX 128 at Baud 0.2", 31, []( frame::HostValues& h ) {
+		h.type       = 1.0f;
+		h.baud       = 0.2f;
+		h.progress   = 0.7f;
+		h.background = float( Pilot::kBackgroundBlack );
+	} );
+	add( "C64 turbo flash border, Baud 0.8", 17, []( frame::HostValues& h ) {
+		h.type     = 2.0f;
+		h.baud     = 0.8f;
+		h.progress = 0.5f;
+	} );
+	//At 1.2 s the Amstrad's border phase is a whole number of half-cycles and
+	//its 80 half-cycles a frame put every other stripe edge EXACTLY on a pixel
+	//centre at 1080 rows: the worst case for ties, on purpose.
+	add( "Amstrad, wide border, long pilot", 30, []( frame::HostValues& h ) {
+		h.type        = 3.0f;
+		h.borderWidth = 1.0f;
+		h.pilotLength = 0.8f;
+		h.progress    = 0.9f;
+	} );
+	add( "a failed block, message up", 0, []( frame::HostValues& h ) {
+		h.errorRate = kSweepErrorRate;
+		h.progress  = kSweepProgress;
+	} );
+	add( "Sync Clip time", 33, []( frame::HostValues& h ) {
+		h.sync     = float( Pilot::kSyncClip );
+		h.progress = 0.1f;
+	} );
+	add( "Mix 0: a bypass", 3, []( frame::HostValues& h ) { h.mix = 0.0f; } );
+	return cases;
+}
+
+//---------------------------------------------------------------------------
+// The comparison, stage by stage, and what may differ.
+//
+// The two copies run the same float arithmetic in the same order, but they
+// are not the same machine, and the picture is a palette of fifteen colours:
+// a disagreement is never a small error, it is a whole neighbouring colour. So
+// a count with a tolerance would be a guess. Instead every pixel that differs
+// by more than one level has to be EXPLAINED, by one of exactly two causes,
+// and anything left over fails:
+//
+//   tie       the output pixel's centre lands exactly on a decision edge -- the
+//             line between two Spectrum pixels, or between two border
+//             stripes -- where the GPU's interpolated UV and the CPU's exact
+//             one fall on opposite sides. Proved, not assumed: the CPU's own
+//             compose pass, moved a thousandth of a pixel, gives the GPU's
+//             answer.
+//   rounding  the GPU's texture filter put a raster byte one level away from
+//             the CPU's, inside this pixel's 8x8 cell, and that moved the
+//             cell's threshold or this pixel across it. Proved, not assumed:
+//             the raster is read back from the GPU and compared byte for byte,
+//             and every byte must be within one level.
+//
+// A difference of exactly one level is the output's own eight-bit rounding of
+// a value that sits on a half step, which only Mix strictly between 0 and 1
+// produces.
+//
+// And to show none of this can explain away a real disagreement, the control
+// renders the CPU at a different Progress, and the unexplained count there
+// must be large.
+//---------------------------------------------------------------------------
+struct StageDiff
+{
+	int rasterBytes      = 0;   ///< raster bytes that differ, of 196,608
+	int rasterWorst      = 0;   ///< the largest, in levels of 255
+	int cellsOtherRound  = 0;   ///< pass 2 alone: cells whose threshold is one half-float step up
+	int cellsDiffering   = 0;   ///< pass 2 alone: cells that differ any other way; must be zero
+	int thresholdsMoved  = 0;   ///< cells whose threshold the CPU's own raster moved
+	long long frameDiffering = 0;///< pixels that differ at all
+	int frameWorst       = 0;
+	long long beyondOne  = 0;   ///< ...by more than one level
+	long long ties       = 0;   ///< of those, a decision edge on the pixel centre
+	long long rounding   = 0;   ///< of those, a raster byte one level out in the cell
+	long long unexplained = 0;  ///< the rest; must be zero
+};
+
+StageDiff measureCase( Instance& i, const Target& target, GLuint input, const std::vector< unsigned char >& picture,
+                       int w, int h, const frame::HostValues& gpuHost, const frame::HostValues& cpuHost,
+                       double seconds, Image* gpuOut, Image* cpuOut, std::vector< char >* explainedOut = nullptr )
+{
+	StageDiff d;
+	std::vector< char > explained( static_cast< size_t >( w ) * h, 0 );//top row first, as the Images are
+
+	applyHost( i, gpuHost );
+	const Image gpu = render( i, target, input, w, h, seconds );
+
+	std::vector< unsigned char > gpuRaster;
+	std::vector< float > gpuAttr;
+	if( !i.plugin.PassesForTest( gpuRaster, gpuAttr ) )
+	{
+		d.unexplained = static_cast< long long >( w ) * h;
+		return d;
+	}
+
+	const frame::Uniforms u = frame::Prepare( cpuHost, ofxProgress( cpuHost, seconds ), seconds );
+	const render::View view = viewOf( picture, w, h );
+
+	//Pass 1, against the GPU's raster.
+	render::Raster raster;
+	render::RasterRows( view, raster, 0, zx::kScreenH );
+	//Both bottom row first, as the buffers are.
+	std::vector< char > pixelRounded( static_cast< size_t >( zx::kScreenW ) * zx::kScreenH, 0 );
+	std::vector< char > cellRounded( zx::kCellsX * zx::kCellsY, 0 );
+	for( size_t k = 0; k < raster.rgba.size(); ++k )
+	{
+		const int diff = std::abs( int( raster.rgba[ k ] ) - int( gpuRaster[ k ] ) );
+		if( diff == 0 )
+			continue;
+		++d.rasterBytes;
+		d.rasterWorst        = std::max( d.rasterWorst, diff );
+		pixelRounded[ k / 4 ] = 1;
+	}
+
+	//Pass 2 alone: the CPU's attribute pass fed the GPU's raster must give the
+	//GPU's cells exactly -- or, for the threshold, one half-float step up,
+	//which is the same value rounded to nearest instead of toward zero (see
+	//render::Half: OpenGL lets the implementation pick).
+	render::Raster theirs;
+	theirs.rgba = gpuRaster;
+	render::Attributes fromTheirs;
+	render::Attribute( theirs, u.brightMode, fromTheirs );
+	const auto oneHalfStepUp = []( float t ) {
+		uint32_t bits = 0;
+		std::memcpy( &bits, &t, sizeof( bits ) );
+		bits += 0x2000u;//one unit in the last of the ten mantissa bits a half keeps
+		float up = 0.0f;
+		std::memcpy( &up, &bits, sizeof( up ) );
+		return up;
+	};
+	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
+	{
+		const render::Cell& cell = fromTheirs.cells[ c ];
+		const float* g           = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
+		const bool colours       = cell.ink == g[ 0 ] && cell.paper == g[ 1 ] && cell.bright == g[ 2 ];
+		if( colours && cell.threshold == g[ 3 ] )
+			continue;
+		if( colours && oneHalfStepUp( cell.threshold ) == g[ 3 ] )
+			++d.cellsOtherRound;
+		else
+			++d.cellsDiffering;
+	}
+
+	//And the CPU's cells from its OWN raster: where their threshold differs
+	//from the GPU's, a raster byte one level out has moved it.
+	render::Attributes ours;
+	render::Attribute( raster, u.brightMode, ours );
+	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
+		if( ours.cells[ c ].threshold != gpuAttr[ static_cast< size_t >( c ) * 4 + 3 ] )
+		{
+			cellRounded[ c ] = 1;
+			++d.thresholdsMoved;
+		}
+	render::Attributes theirCells;
+	for( int c = 0; c < zx::kCellsX * zx::kCellsY; ++c )
+	{
+		const float* g        = &gpuAttr[ static_cast< size_t >( c ) * 4 ];
+		theirCells.cells[ c ] = { g[ 0 ], g[ 1 ], g[ 2 ], g[ 3 ] };
+	}
+
+	//The whole thing, as the OpenFX plugin runs it.
+	const Image cpu = cpuFrame( cpuHost, seconds, picture, w, h );
+
+	const float inset = u.inset;
+	const float span  = std::max( 1.0f - 2.0f * inset, 1e-5f );
+
+	for( int yTop = 0; yTop < h; ++yTop )
+	{
+		const int y = h - 1 - yTop;//GL row
+		for( int x = 0; x < w; ++x )
+		{
+			const unsigned char* g = gpu.at( x, yTop );
+			const unsigned char* c = cpu.at( x, yTop );
+			int worst              = 0;
+			for( int k = 0; k < 4; ++k )
+				worst = std::max( worst, std::abs( int( g[ k ] ) - int( c[ k ] ) ) );
+			if( worst == 0 )
+				continue;
+			++d.frameDiffering;
+			d.frameWorst = std::max( d.frameWorst, worst );
+			if( worst <= 1 )
+				continue;
+			++d.beyondOne;
+
+			//The CPU's compose pass, run on the GPU's OWN buffers at this pixel
+			//centre and at the eight points a thousandth of a pixel around it.
+			const unsigned char* in = picture.data() + ( static_cast< size_t >( y ) * w + x ) * 4;
+			const float clip[ 4 ]   = { in[ 0 ] / 255.0f, in[ 1 ] / 255.0f, in[ 2 ] / 255.0f, in[ 3 ] / 255.0f };
+			const float pX          = ( x + 0.5f ) / float( w );
+			const float pY          = ( y + 0.5f ) / float( h );
+			const float dx          = 1e-3f / float( w );
+			const float dy          = 1e-3f / float( h );
+			const auto matchesGpu   = [ & ]( float sx, float sy ) {
+				float out[ 4 ];
+				render::ComposeAt( u, theirs, theirCells, clip, sx, sy, out );
+				int off = 0;
+				for( int k = 0; k < 4; ++k )
+					off = std::max( off, std::abs( int( std::lround( std::clamp( out[ k ], 0.0f, 1.0f ) * 255.0f ) ) - int( g[ k ] ) ) );
+				return off <= 1;
+			};
+
+			//At the centre it does NOT give the GPU's answer, so the compose
+			//pass itself disagrees here. A tie if a hair away it does.
+			if( !matchesGpu( pX, pY ) )
+			{
+				bool tie = false;
+				for( int sy = -1; sy <= 1 && !tie; ++sy )
+					for( int sx = -1; sx <= 1 && !tie; ++sx )
+						tie = ( sx != 0 || sy != 0 ) && matchesGpu( pX + sx * dx, pY + sy * dy );
+				if( tie )
+				{
+					++d.ties;
+					explained[ static_cast< size_t >( yTop ) * w + x ] = 1;
+				}
+				else
+				{
+					++d.unexplained;
+				}
+				continue;
+			}
+
+			//On the GPU's buffers the CPU's compose pass agrees, so what differs
+			//is the buffers. Rounding, if this Spectrum pixel's own raster byte
+			//is the one a level out, or its cell's threshold moved.
+			const float ix = ( pX - inset ) / span;
+			const float iy = ( pY - inset ) / span;
+			if( ix >= 0.0f && ix < 1.0f && iy >= 0.0f && iy < 1.0f )
+			{
+				const int px   = std::clamp( int( ix * 256.0f ), 0, 255 );
+				const int pyUp = 191 - std::clamp( int( ( 1.0f - iy ) * 192.0f ), 0, 191 );
+				if( pixelRounded[ static_cast< size_t >( pyUp ) * zx::kScreenW + px ]
+				    || cellRounded[ ( pyUp / 8 ) * zx::kCellsX + px / 8 ] )
+				{
+					++d.rounding;
+					explained[ static_cast< size_t >( yTop ) * w + x ] = 1;
+					continue;
+				}
+			}
+			++d.unexplained;
+		}
+	}
+
+	if( gpuOut != nullptr )
+		*gpuOut = gpu;
+	if( cpuOut != nullptr )
+		*cpuOut = cpu;
+	if( explainedOut != nullptr )
+		*explainedOut = std::move( explained );
+	return d;
+}
+
+void sayStage( const char* name, const StageDiff& d, int w, int h )
+{
+	Say( "    %-44s %5d (<=%d) %3d %3d/%-3d %8lld %6.3f%% %4d %7lld %7lld %6lld %5lld\n", name, d.rasterBytes, d.rasterWorst,
+	     d.thresholdsMoved, d.cellsOtherRound, d.cellsDiffering, d.frameDiffering, 100.0 * double( d.frameDiffering ) / double( w * h ), d.frameWorst,
+	     d.beyondOne, d.ties, d.rounding, d.unexplained );
+}
+
+int cpuAt( int w, int h, bool probeRamp, int& casesRun )
+{
+	Target target;
+	if( !target.Create( w, h ) )
+	{
+		Check( false, "framebuffer at " + std::to_string( w ) + "x" + std::to_string( h ) );
+		return g_failures;
+	}
+
+	const std::vector< unsigned char > picture = probeRamp ? buildProbeRamp( w, h ) : buildCard( w, h );
+	const GLuint input                         = makeInput( picture, w, h );
+
+	Say( "  %dx%d, %s\n", w, h, probeRamp ? "ofxprobe's ramp" : "the card" );
+	Say( "    %-44s %11s %3s %7s %8s %7s %4s %7s %7s %6s %5s\n", "", "raster", "thr", "cells", "differ", "", "max", ">1 lvl",
+	     "tie", "round", "unexp" );
+
+	for( const CpuCase& c : cpuCases() )
+	{
+		Instance i( w, h );
+		Image gpu, cpu;
+		const StageDiff d = measureCase( i, target, input, picture, w, h, c.host, c.host, c.seconds, &gpu, &cpu );
+		++casesRun;
+		dumpPair( std::string( probeRamp ? "ramp-" : "" ) + c.name, gpu, cpu );
+		sayStage( c.name, d, w, h );
+
+		Check( d.rasterWorst <= 1, std::string( "  " ) + c.name + ": every raster byte within one level of the GPU's" );
+		Check( d.cellsDiffering == 0, std::string( "  " ) + c.name + ": the attribute pass on the GPU's raster gives the GPU's cells" );
+		Check( d.unexplained == 0, std::string( "  " ) + c.name + ": every pixel that differs is a tie or a raster rounding" );
+	}
+
+	//The control: the CPU at a different position on the tape. Its differences
+	//are neither ties nor rounding, and the classifier must say so.
+	{
+		frame::HostValues gpuHost;
+		frame::HostValues cpuHost;
+		cpuHost.progress = gpuHost.progress + 0.05f;
+
+		Instance i( w, h );
+		const StageDiff d = measureCase( i, target, input, picture, w, h, gpuHost, cpuHost, 0.1, nullptr, nullptr );
+		sayStage( "control: CPU at Progress 0.50, GPU at 0.45", d, w, h );
+		Check( d.unexplained > static_cast< long long >( w ) * h / 100, "  the control is unexplained, so the comparison can fail" );
+	}
+
+	glDeleteTextures( 1, &input );
+	target.Destroy();
+	return g_failures;
+}
+
+int runCpu()
+{
+	std::printf( "cpu: the OpenFX build's renderer (Render.cpp) against the GPU\n" );
+
+	CGLContextObj context = createContext();
+	if( context == nullptr )
+	{
+		std::printf( "   FAIL  could not create an OpenGL 4.1 core context\n" );
+		return ++g_failures;
+	}
+	std::printf( "\n  GL %s / %s\n\n", glGetString( GL_VERSION ), glGetString( GL_RENDERER ) );
+
+	int cases = 0;
+	cpuAt( 1920, 1080, false, cases );
+	cpuAt( 640, 480, false, cases );
+	cpuAt( 640, 360, true, cases );
+
+	CGLSetCurrentContext( nullptr );
+	CGLDestroyContext( context );
+	return g_failures;
+}
+
+//---------------------------------------------------------------------------
+/// --transition: the OpenFX transition, against the GPU.
+//---------------------------------------------------------------------------
+/// FFGL has no two-input form of this effect, so there is no GPU transition
+/// to render. What the GPU CAN say is which pixels of the incoming picture are
+/// the effect and which are background: render it once with Background =
+/// Paper and once with Background = Black, and the pixels that differ are
+/// exactly the addresses that have not arrived. A transition is then fully
+/// determined -- the outgoing shot through those pixels, the GPU's own frame
+/// everywhere else, and Mix across the lot -- and render::Transition, at the
+/// transition's own fader positions, is held to that.
+///
+/// A pixel that differs by more than one level must be one --cpu's classifier
+/// already explained in either of the two GPU frames it was built from (a tie
+/// or a raster rounding, see above). The control swaps the two pictures.
+int transitionAt( int w, int h )
+{
+	Target target;
+	if( !target.Create( w, h ) )
+	{
+		Check( false, "framebuffer at " + std::to_string( w ) + "x" + std::to_string( h ) );
+		return g_failures;
+	}
+
+	const std::vector< unsigned char > to   = buildCard( w, h );
+	const std::vector< unsigned char > from = buildQuads( w, h );
+	const GLuint input                      = makeInput( to, w, h );
+
+	const render::View fromView = viewOf( from, w, h );
+	const render::View toView   = viewOf( to, w, h );
+
+	Say( "  %dx%d\n", w, h );
+	Say( "    %-46s %8s %10s %4s %7s %9s %5s\n", "", "differ", "", "max", ">1 lvl", "explained", "unexp" );
+
+	struct Result
+	{
+		long long differing = 0, beyondOne = 0, explained = 0, unexplained = 0;
+		int worst = 0;
+	};
+
+	//One position, one Mix. `swap` puts the pictures the wrong way round, for
+	//the control.
+	auto run = [ & ]( float position, float mix, bool swap, bool borderOn ) {
+		Result r;
+		const double seconds = 0.5 + position * 3.0;
+
+		frame::HostValues paper;
+		paper.progress          = position;
+		paper.borderOn          = borderOn ? 1.0f : 0.0f;
+		paper.background        = float( Pilot::kBackgroundPaper );
+		frame::HostValues black = paper;
+		black.background        = float( Pilot::kBackgroundBlack );
+
+		Instance gi( w, h );
+		Image gpuPaper, gpuBlack;
+		std::vector< char > paperExplained, blackExplained;
+		measureCase( gi, target, input, to, w, h, paper, paper, seconds, &gpuPaper, nullptr, &paperExplained );
+		measureCase( gi, target, input, to, w, h, black, black, seconds, &gpuBlack, nullptr, &blackExplained );
+
+		//What the transition must be, from those two and the outgoing shot.
+		//`from` is stored bottom row first; the Images are top row first.
+		Image expected = gpuPaper;
+		for( int y = 0; y < h; ++y )
+		{
+			const unsigned char* f = from.data() + static_cast< size_t >( h - 1 - y ) * w * 4;
+			for( int x = 0; x < w; ++x )
+			{
+				const unsigned char* p = gpuPaper.at( x, y );
+				const unsigned char* b = gpuBlack.at( x, y );
+				const bool unarrived   = p[ 0 ] != b[ 0 ] || p[ 1 ] != b[ 1 ] || p[ 2 ] != b[ 2 ];
+
+				unsigned char* e = expected.px.data() + ( static_cast< size_t >( y ) * w + x ) * 4;
+				for( int c = 0; c < 4; ++c )
+				{
+					const float under = f[ x * 4 + c ] / 255.0f;
+					const float wet   = c == 3 ? 1.0f : ( unarrived ? under : p[ c ] / 255.0f );
+					e[ c ] = static_cast< unsigned char >( std::lround( std::clamp( under * ( 1.0f - mix ) + wet * mix, 0.0f, 1.0f ) * 255.0f ) );
+				}
+			}
+		}
+
+		frame::HostValues controls = paper;
+		controls.background        = float( Pilot::kBackgroundClip );
+		controls.mix               = mix;
+
+		std::vector< float > out( static_cast< size_t >( w ) * h * 4 );
+		if( swap )
+			render::Transition( toView, fromView, position, seconds, controls, w, h, out.data() );
+		else
+			render::Transition( fromView, toView, position, seconds, controls, w, h, out.data() );
+		const Image cpu = fromFloat( out, w, h );
+
+		for( size_t p = 0, k = 0; p + 3 < expected.px.size(); p += 4, ++k )
+		{
+			int worst = 0;
+			for( int c = 0; c < 4; ++c )
+				worst = std::max( worst, std::abs( int( expected.px[ p + c ] ) - int( cpu.px[ p + c ] ) ) );
+			if( worst == 0 )
+				continue;
+			++r.differing;
+			r.worst = std::max( r.worst, worst );
+			if( worst <= 1 )
+				continue;
+			++r.beyondOne;
+			if( paperExplained[ k ] || blackExplained[ k ] )
+				++r.explained;
+			else
+				++r.unexplained;
+		}
+		return r;
+	};
+
+	const float positions[] = { 0.0f, 0.08f, 0.3f, 0.55f, 0.9f, 1.0f };
+	const float mixes[]     = { 1.0f, 0.6f };
+
+	for( const float mix : mixes )
+	{
+		for( const float position : positions )
+		{
+			const Result r = run( position, mix, false, true );
+			char name[ 64 ];
+			std::snprintf( name, sizeof( name ), "Transition %.2f, Mix %.1f", position, mix );
+			Say( "    %-46s %8lld %9.3f%% %4d %7lld %9lld %5lld\n", name, r.differing,
+			     100.0 * double( r.differing ) / double( w * h ), r.worst, r.beyondOne, r.explained, r.unexplained );
+			Check( r.unexplained == 0, std::string( "  " ) + name + ": matches the transition built from the GPU's frames" );
+		}
+	}
+
+	//Where nothing has arrived and there is no border, the first frame of the
+	//transition is the outgoing shot, byte for byte.
+	{
+		frame::HostValues bare;
+		bare.background = float( Pilot::kBackgroundClip );
+		bare.borderOn   = 0.0f;
+		std::vector< float > first( static_cast< size_t >( w ) * h * 4 );
+		render::Transition( fromView, toView, 0.0f, 0.5, bare, w, h, first.data() );
+		const Image firstImage = fromFloat( first, w, h );
+
+		long long rowsNotFrom = 0;
+		for( int y = 0; y < h; ++y )
+		{
+			const unsigned char* f = from.data() + static_cast< size_t >( h - 1 - y ) * w * 4;
+			if( std::memcmp( f, firstImage.px.data() + static_cast< size_t >( y ) * w * 4, static_cast< size_t >( w ) * 4 ) != 0 )
+				++rowsNotFrom;
+		}
+		Check( rowsNotFrom == 0, "  Transition 0 with no border is the outgoing shot, byte for byte" );
+	}
+
+	//The control.
+	{
+		const Result r = run( 0.55f, 1.0f, true, true );
+		Say( "    %-46s %8lld %9.3f%% %4d %7lld %9lld %5lld\n", "control: SourceFrom and SourceTo swapped", r.differing,
+		     100.0 * double( r.differing ) / double( w * h ), r.worst, r.beyondOne, r.explained, r.unexplained );
+		Check( r.unexplained > static_cast< long long >( w ) * h / 100, "  the control is unexplained, so the comparison can fail" );
+	}
+
+	glDeleteTextures( 1, &input );
+	target.Destroy();
+	return g_failures;
+}
+
+int runTransition()
+{
+	std::printf( "transition: render::Transition against the GPU's own frames\n" );
+
+	CGLContextObj context = createContext();
+	if( context == nullptr )
+	{
+		std::printf( "   FAIL  could not create an OpenGL 4.1 core context\n" );
+		return ++g_failures;
+	}
+	std::printf( "\n  GL %s / %s\n\n", glGetString( GL_VERSION ), glGetString( GL_RENDERER ) );
+
+	transitionAt( 1920, 1080 );
+	transitionAt( 640, 480 );
+
+	CGLSetCurrentContext( nullptr );
+	CGLDestroyContext( context );
+	return g_failures;
+}
+
+//---------------------------------------------------------------------------
+/// --cpu-bench: what Render.cpp costs, for the record.
+//---------------------------------------------------------------------------
+/// The OpenFX plugin splits the raster rows and the output rows across
+/// whatever threads the host's multi-thread suite gives it. This does the same
+/// split with std::thread, over the same library calls, so the figure is the
+/// renderer's and not any one host's; the single-threaded line is there for a
+/// host that offers no suite at all, where the Support library runs the job on
+/// the calling thread.
+int runCpuBench( int frames )
+{
+	const unsigned threads = std::max( 1u, std::thread::hardware_concurrency() );
+	std::printf( "cpu-bench: Render.cpp, the OpenFX build's renderer\n\n" );
+	std::printf( "  %-12s %8s %14s %14s\n", "size", "threads", "ms/frame", "1 thread" );
+
+	for( auto size : { std::pair< int, int >{ 1280, 720 },
+	                   std::pair< int, int >{ 1920, 1080 },
+	                   std::pair< int, int >{ 3840, 2160 } } )
+	{
+		const int w = size.first, h = size.second;
+		const std::vector< unsigned char > picture = buildCard( w, h );
+		const render::View view                    = viewOf( picture, w, h );
+		std::vector< float > out( static_cast< size_t >( w ) * h * 4 );
+
+		frame::HostValues host;
+		host.progress = 0.6f;
+
+		auto one = [ & ]( unsigned n, int f ) {
+			const double seconds    = f / 60.0;
+			const frame::Uniforms u = frame::Prepare( host, ofxProgress( host, seconds ), seconds );
+
+			render::Raster raster;
+			std::vector< std::thread > pool;
+			for( unsigned t = 0; t < n; ++t )
+				pool.emplace_back( [ & ]( unsigned id ) {
+					render::RasterRows( view, raster, zx::kScreenH * int( id ) / int( n ), zx::kScreenH * int( id + 1 ) / int( n ) );
+				}, t );
+			for( auto& th : pool )
+				th.join();
+			pool.clear();
+
+			render::Attributes attributes;
+			render::Attribute( raster, u.brightMode, attributes );
+
+			for( unsigned t = 0; t < n; ++t )
+				pool.emplace_back( [ & ]( unsigned id ) {
+					for( int y = h * int( id ) / int( n ); y < h * int( id + 1 ) / int( n ); ++y )
+						render::ComposeRow( u, raster, attributes, view, w, h, y, 0, w, out.data() + static_cast< size_t >( y ) * w * 4 );
+				}, t );
+			for( auto& th : pool )
+				th.join();
+		};
+
+		auto time = [ & ]( unsigned n ) {
+			for( int f = 0; f < 3; ++f )
+				one( n, f );
+			const auto start = std::chrono::steady_clock::now();
+			for( int f = 0; f < frames; ++f )
+				one( n, f );
+			return std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now() - start ).count() / frames;
+		};
+
+		const double many   = time( threads );
+		const double single = time( 1 );
+		std::printf( "  %4dx%-7d %8u %14s %14s\n", w, h, threads, F( many, 2 ).c_str(), F( single, 2 ).c_str() );
+	}
+	return 0;
+}
+
 //---------------------------------------------------------------------------
 // --pipe cue sheet: one 'frame Parameter Name value' per line, '#' comments.
 // Same format as the rest of the fleet (rosette's rztest), so one filming
@@ -1821,7 +2626,7 @@ int paramIndex( Pilot& plugin, const std::string& name )
 /// composition of that size would be.
 //---------------------------------------------------------------------------
 int runPipe( int width, int height, double fps, const std::string& scriptPath,
-             const std::vector< std::pair< std::string, float > >& overrides )
+             const std::vector< std::pair< std::string, float > >& overrides, bool viaCpu )
 {
 	CGLContextObj context = createContext();
 	if( context == nullptr )
@@ -1909,7 +2714,19 @@ int runPipe( int width, int height, double fps, const std::string& scriptPath,
 			glTexSubImage2D( GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, flipped.data() );
 			glBindTexture( GL_TEXTURE_2D, 0 );
 
-			Image img = render( instance, target, input, width, height, index / fps );
+			//--via-cpu renders the same frame through Render.cpp -- the OpenFX
+			//build's renderer -- with the controls the plugin instance holds,
+			//so a host's output can be compared with the CPU path directly.
+			Image img;
+			if( viaCpu )
+			{
+				const frame::HostValues host = hostOf( instance.plugin );
+				img = cpuFrame( host, index / fps, flipped, width, height );
+			}
+			else
+			{
+				img = render( instance, target, input, width, height, index / fps );
+			}
 
 			//Premultiplied output is already the over-black composite, so
 			//flattening is forcing alpha opaque -- as the PNG path does.
@@ -1980,10 +2797,17 @@ void usage()
 		"  --pixels          attributes, border and message, two rasters\n"
 		"  --bench           720p, 1080p and 4K\n"
 		"\n"
+		"  the OpenFX build's renderer (source/Render.cpp):\n"
+		"  --cpu             the CPU copy against the GPU, two rasters\n"
+		"  --transition      the OpenFX transition against the GPU's frames\n"
+		"  --cpu-bench       its cost at 720p, 1080p and 4K, threaded and not\n"
+		"\n"
 		"  rendering for film, not a check:\n"
 		"  --pipe            raw RGBA frames on stdin, raw RGBA frames on stdout\n"
 		"  --script PATH     parameter cues for --pipe: 'frame Name value'\n"
-		"  --fps N           the clock --pipe runs on (default 60)\n" );
+		"  --fps N           the clock --pipe runs on (default 60)\n"
+		"  --via-cpu         --pipe through Render.cpp, the OpenFX build's renderer,\n"
+		"                    instead of the shaders (Beat and Bar sync are FFGL-only)\n" );
 }
 } // namespace
 
@@ -1993,11 +2817,13 @@ int main( int argc, char** argv )
 	int width = 1920, height = 1080;
 	int frames = 5;
 	int benchFrames = 240;
+	int cpuBenchFrames = 20;
 	float flatLevel = -1.0f;
 	bool quads = false;
 	std::vector< std::pair< std::string, float > > overrides;
 	std::vector< std::string > modes;
 	bool wantPipe = false;
+	bool viaCpu   = false;
 	std::string scriptPath;
 	double fps = 60.0;
 
@@ -2023,11 +2849,13 @@ int main( int argc, char** argv )
 		else if( arg == "--frames" )
 			frames = std::atoi( next().c_str() );
 		else if( arg == "--bench-frames" )
-			benchFrames = std::atoi( next().c_str() );
+			benchFrames = cpuBenchFrames = std::atoi( next().c_str() );
 		else if( arg == "--flat" )
 			flatLevel = std::strtof( next().c_str(), nullptr );
 		else if( arg == "--quads" )
 			quads = true;
+		else if( arg == "--via-cpu" )
+			viaCpu = true;
 		else if( arg == "--pipe" )
 			wantPipe = true;
 		else if( arg == "--script" )
@@ -2083,7 +2911,7 @@ int main( int argc, char** argv )
 			std::fprintf( stderr, "pttest: --fps must be positive\n" );
 			return 2;
 		}
-		return runPipe( width, height, fps, scriptPath, overrides );
+		return runPipe( width, height, fps, scriptPath, overrides, viaCpu );
 	}
 
 	//-----------------------------------------------------------------------
@@ -2106,7 +2934,9 @@ int main( int argc, char** argv )
 			else if( mode == "--clock" )  { runClock(); ranSomething = true; }
 			else if( mode == "--names" )  { runNames(); ranSomething = true; }
 			else if( mode == "--negative" ) { runNegative(); ranSomething = true; }
-			else if( mode == "--reveal" || mode == "--pixels" || mode == "--bench" || mode == "--list" )
+			else if( mode == "--cpu-bench" ) return runCpuBench( std::max( cpuBenchFrames, 1 ) );
+			else if( mode == "--reveal" || mode == "--pixels" || mode == "--bench" || mode == "--list"
+			         || mode == "--cpu" || mode == "--transition" )
 				needGL = true;
 			else
 			{
@@ -2140,6 +2970,10 @@ int main( int argc, char** argv )
 				runReveal();
 			else if( mode == "--pixels" )
 				runPixels();
+			else if( mode == "--cpu" )
+				runCpu();
+			else if( mode == "--transition" )
+				runTransition();
 			else if( mode == "--bench" )
 				return runBench( benchFrames );
 		}
@@ -2192,9 +3026,12 @@ int main( int argc, char** argv )
 		instance.plugin.SetFloatParameter( static_cast< unsigned int >( index ), o.second );
 	}
 
-	Image img;
+	//renderOnly and one readBack, not render(): out here at file scope the
+	//name `render` is also pilot::render, Render.cpp's namespace, and the call
+	//is ambiguous. Only the last frame is ever kept, so nothing changes.
 	for( int f = 0; f < frames; ++f )
-		img = render( instance, target, input, width, height, f / 60.0 );
+		renderOnly( instance, target, input, width, height, f / 60.0 );
+	Image img = readBack( target );
 
 	const GLenum error = glGetError();
 	if( error != GL_NO_ERROR )

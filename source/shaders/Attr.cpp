@@ -34,6 +34,12 @@ namespace pilot::shaders
 /// flag, A = the threshold. RGBA16F, not RGBA8: the threshold decides a
 /// per-pixel comparison, and quantising it to 1/255 would move the bit pattern
 /// of every low-contrast cell.
+//= mirrored: Render.cpp Attribute() -- the OpenFX build renders this pass on
+//  the CPU, statement for statement; nearestColour() is NearestColour() there.
+//  Change one, change the other, then run `pttest --cpu`, which renders both
+//  and compares them. The marker sits out here rather than in the GLSL because
+//  demo/plugin.js carries the string character for character and
+//  demo/tools/check_shaders.py holds it to that.
 const char* const kAttrFragment = R"(#version 410 core
 uniform sampler2D RasterTexture;
 uniform vec2 MaxUV;

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Frame.h"
 #include "Loader.h"
 #include "PassBuffer.h"
 #include "StoatworksAboutParams.h"
@@ -87,11 +88,12 @@ public:
 		kSyncBar    = 3,
 	};
 
+	/// Shared with the OpenFX build, which lists the same three.
 	enum BackgroundMode
 	{
-		kBackgroundPaper = 0,
-		kBackgroundBlack = 1,
-		kBackgroundClip  = 2,
+		kBackgroundPaper = pilot::frame::kBackgroundPaper,
+		kBackgroundBlack = pilot::frame::kBackgroundBlack,
+		kBackgroundClip  = pilot::frame::kBackgroundClip,
 	};
 
 	//-----------------------------------------------------------------------
@@ -119,6 +121,13 @@ public:
 	/// Where the message bitmap lives in Spectrum pixels, and how big it is.
 	static void MessageBoxForTest( int& x, int& y, int& w, int& h );
 
+	/// The two intermediate buffers as the last ProcessOpenGL left them: the
+	/// 256x192 RGBA8 raster and the 32x24 RGBA16F attribute cells, each bottom
+	/// row first. `pttest --cpu` holds the OpenFX build's CPU copy of the
+	/// passes to these one stage at a time, so a disagreement in the output can
+	/// be traced to the pass it started in. Needs the GL context current.
+	bool PassesForTest( std::vector< unsigned char >& raster, std::vector< float >& attributes );
+
 private:
 	bool compileShaders();
 	void releaseBuffers();
@@ -132,6 +141,11 @@ private:
 
 	/// What the load has got to, with the Sync mode applied.
 	float effectiveProgress( double seconds ) const;
+
+	/// The controls as Frame.cpp takes them. Everything a frame decides on the
+	/// CPU is decided there, from this, so the OpenFX build can decide it the
+	/// same way.
+	pilot::frame::HostValues hostValues() const;
 
 	ffglex::FFGLShader rasterShader;
 	ffglex::FFGLShader attrShader;

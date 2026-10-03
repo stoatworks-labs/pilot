@@ -21,6 +21,14 @@ namespace pilot::shaders
 /// The raster and attribute textures are stored bottom-up like every other GL
 /// texture, so reading them from a top-down coordinate is `191 - py` and
 /// `23 - cy`. Those two subtractions are the only flips in the plugin.
+//= mirrored: Render.cpp ComposeRow() -- the OpenFX build renders this pass on
+//  the CPU, statement for statement; zxColour() and borderColour() are
+//  ZxColour() and BorderColour() there. screenIndex() is not copied a fourth
+//  time: the CPU calls zx::ScreenIndex, which --agree and --reveal already
+//  bind to this one. Change one, change the other, then run `pttest --cpu`,
+//  which renders both and compares them. The marker sits out here rather than
+//  in the GLSL because demo/plugin.js carries the string character for
+//  character and demo/tools/check_shaders.py holds it to that.
 const char* const kComposeFragment = R"(#version 410 core
 uniform sampler2D RasterTexture;
 uniform sampler2D AttrTexture;

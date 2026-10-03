@@ -14,11 +14,15 @@
 	  Compose  the output. The address order, the reveal, the border stripes,
 	           the loading-error message and the mix.
 
+	All three are mirrored on the CPU in `Render.cpp`, which is how the OpenFX
+	build renders, and each raw string carries a `//= mirrored:` marker naming
+	its twin. `pttest --cpu` renders both and compares them pixel by pixel.
+
 	Almost nothing is decided here that could be decided on the CPU. The byte
 	count, the border phase and the error state all arrive as uniforms from
-	`Loader.cpp`, which is what lets `pttest` check them without a GL context.
-	What the shader owns is the thing only the shader can own: the address
-	arithmetic per pixel.
+	`Frame.cpp` (the tape itself is `Loader.cpp`), which is what lets `pttest`
+	check them without a GL context. What the shader owns is the thing only the
+	shader can own: the address arithmetic per pixel.
 
 	GLSL 4.10 core. Note the reserved words the fleet has been bitten by —
 	`layout`, `flat`, `active`, `filter`, `input`, `output`, `sample`, `common`,
