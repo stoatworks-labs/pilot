@@ -51,6 +51,22 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+# resolume-ofx-bridge, for ofxprobe. It sits beside this repo's checkout --
+# and from a git worktree `..` is the worktrees folder, not Projects/resolume,
+# so the main checkout is found through git's common dir as well.
+# PILOT_BRIDGE overrides both, and OFXPROBE the probe itself.
+BRIDGE="${PILOT_BRIDGE:-}"
+if [ -z "$BRIDGE" ]; then
+	for candidate in "../resolume-ofx-bridge" \
+	                 "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")/../resolume-ofx-bridge"; do
+		if [ -d "$candidate/build" ]; then
+			BRIDGE="$candidate"
+			break
+		fi
+	done
+fi
+BRIDGE="${BRIDGE:-../resolume-ofx-bridge}"
+
 BUILD="${BUILD:-build}"
 failures=0
 
@@ -340,8 +356,7 @@ if [ "$(uname)" = "Darwin" ]; then
 		# A host loading it. ofxprobe also scans /Library/OFX/Plugins and takes
 		# the FIRST bundle with a matching identifier, so an installed Pilot
 		# would be what got tested; say so rather than report on the wrong one.
-		OFXPROBE="${OFXPROBE:-../resolume-ofx-bridge/build/ofxprobe}"
-		[ -x "$OFXPROBE" ] || OFXPROBE="$HOME/Projects/resolume/resolume-ofx-bridge/build/ofxprobe"
+		OFXPROBE="${OFXPROBE:-$BRIDGE/build/ofxprobe}"
 		if [ ! -x "$OFXPROBE" ]; then
 			printf '   skipped: ofxprobe not built at %s\n' "$OFXPROBE"
 		elif [ -e "/Library/OFX/Plugins/Pilot.ofx.bundle" ]; then
