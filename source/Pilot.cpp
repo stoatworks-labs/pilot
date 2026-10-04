@@ -32,7 +32,7 @@ static CFFGLPluginInfo PluginInfo(
 	2,                     // API major version number
 	1,                     // API minor version number
 	0,                     // Plugin major version number
-	1,                     // Plugin minor version number
+	2,                     // Plugin minor version number
 	FF_EFFECT,             // Plugin type
 	"A tape loader. The clip arrives the way a ZX Spectrum loaded it: in screen-memory order, at the baud rate, with the border painted by the loading signal itself.\n\nThe Spectrum's display file is not linear, so the picture does not wipe down the screen - it arrives in three thirds, each filling in an eight-line interleave. Colour comes last, in one block of attributes, so the image lands in monochrome and colours in at the very end.\n\nA transition, in practice. Drive Progress by hand, by clip time, or off the beat.",// Plugin description
 	"pilot FFGL effect"    // About

@@ -496,7 +496,10 @@ Two things the table does not contain, and the absence is deliberate:
   `build_guides.py` renders it to `docs/USER-GUIDE.pdf` and to
   https://stoatworks-labs.com/software/pilot/guide/.
 - Display name `SW Pilot`, FFGL id `PT01`, bundle id `com.stoatworks.ffgl.pilot`,
-  version `0.1.0` in both `CMakeLists.txt` and `source/StoatworksAbout.h`.
+  version `0.2.0` in `CMakeLists.txt`, `source/StoatworksAbout.h` and
+  `vcpkg.json`, and `0, 2` as the plugin major and minor version in `Pilot.cpp`'s
+  `CFFGLPluginInfo` (what the host reads; it has no patch field). The OpenFX
+  bundle takes its version from `CMakeLists.txt`.
 - OpenFX: identifier `com.stoatworks.pilot`, label `Pilot`, grouping `Stoatworks`,
   bundle id `com.stoatworks.pilot.ofx`. Parameter script names (`machine`, `baud`,
   `ink`, `paper`, `bright`, `progress`, `sync`, `errorRate`, `messageOn`,
