@@ -370,9 +370,10 @@ What the OpenFX build does not have:
 - **Beat and Bar sync.** An OpenFX host does not give a plugin a tempo, so those
   two modes are not offered.
 
-**Fusion reports no frame rate; there, time-based controls assume 24 fps.** In
-Resolve's Fusion page, Clip time and the border's stripes run on a 24 fps clock;
-on the Edit and Color pages they follow the timeline's own rate.
+**Resolve's Fusion page reports the frame rate on the effect but not on its
+clips; the plugin reads the effect's, and assumes 24 fps only where a host
+reports none.** So in Fusion, as on the Edit and Color pages, Clip time and the
+border's stripes follow the timeline's own rate.
 
 It renders on the CPU rather than the GPU — about 5 ms a frame at 1920×1080 on a
 16-thread Apple M4 Max, about 35 ms on a single thread — and the picture matches

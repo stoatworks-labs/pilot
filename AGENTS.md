@@ -599,28 +599,32 @@ reformulated. OFX time is in frames; the border and Clip time take seconds as
 `time / output frame rate`. Clip time therefore runs along the host's timeline
 from its zero, and loops.
 
-**Fusion reports no frame rate; there, time-based controls assume 24 fps.**
-Found by the lead loading the port into DaVinci Resolve Studio 21.1 as a Fusion
-tool (MediaIn → Pilot → MediaOut): the render failed with "could not be
-processed successfully". A -DDEBUG Support library logged
+**Resolve's Fusion page reports the frame rate on the effect but not on its
+clips; the plugin reads the effect's, and assumes 24 fps only where a host
+reports none.** Found by the lead loading the port into DaVinci Resolve Studio
+21.1 as a Fusion tool (MediaIn → Pilot → MediaOut): the render failed with
+"could not be processed successfully". A -DDEBUG Support library logged
 `PropertyUnknownToHost: OfxImageEffectPropFrameRate` out of the render action:
-Resolve's Fusion page sets no frame rate on the effect or any clip, and the
-Support library throws on a missing property. The Edit page does report one
-(24 on a 24 fps timeline). Every frame-rate read now goes through
-`framesPerSecond()` — the output clip, then the inputs, then the effect, each
-read in its own try/catch, the first positive finite value — and falls back to
-24, Resolve's timeline default. The premultiplication read is guarded the same
-way. Fusion's other gaps — a frame range of [0, 0], no unmapped pair, no
+the build read a clip's frame rate, Resolve's Fusion page sets none on any clip,
+and the Support library throws on a missing property. Fusion does set one on the
+effect, and it follows the timeline (24 in a 24 fps project, 25 in a 25 fps
+one); the Edit page reports one too (24 on a 24 fps timeline). Every frame-rate
+read now goes through `framesPerSecond()` — the output clip, then the inputs,
+then the effect, each read in its own try/catch, the first positive finite
+value — which in Fusion finds the effect's, and falls back to 24, Resolve's
+timeline default, only where a host reports none. The premultiplication read is
+guarded the same way. Fusion's other gaps — no unmapped pair on the clips, no
 render-status pair — are properties this plugin never reads. Checked in the test
-host's `--quirks fusion` mode, which leaves the same properties out: the build
-before the guard fails there with `kOfxStatErrMissingHostFeature` as a filter, as
-General and as a transition — the Resolve failure, reproduced — and the guarded
-build renders all four cases checked (filter on Clip time, General, a Fade
-ramp, the transition's middle) byte-identically to the same render in a host
-reporting 24 fps, and differently from 25, so the fallback is really what is
-used. Fade's ends are still the clips byte for byte under it. Outside the quirk
-every one of 133 earlier test-host renders is byte-identical to before the
-change. `verify.sh` renders the quirk when `OFXPROBE` names a probe that has it.
+host's `--quirks fusion` mode, which is stricter than Fusion and leaves the
+effect's rate out too: the build before the guard fails there with
+`kOfxStatErrMissingHostFeature` as a filter, as General and as a transition —
+the Resolve failure, reproduced — and the guarded build renders all four cases
+checked (filter on Clip time, General, a Fade ramp, the transition's middle)
+byte-identically to the same render in a host reporting 24 fps, and differently
+from 25, so the fallback is really what is used there. Fade's ends are still the
+clips byte for byte under it. Outside the quirk every one of 133 earlier
+test-host renders is byte-identical to before the change. `verify.sh` renders
+the quirk when `OFXPROBE` names a probe that has it.
 
 **What is dropped: Beat and Bar.** An OpenFX host gives a plugin no tempo and no
 bar position. The Sync menu is Manual and Clip time, at the FFGL indices; the
@@ -720,7 +724,8 @@ the guarded macOS build):
 - **As a Fusion tool** (MediaIn → Pilot → MediaOut, a render job to PNG at
   1920×1080, defaults), frames 0–5 are byte-identical to the test host's float
   render of the same input frames at `--frame-rate 24`. So the frame-rate guard
-  works in the host that needed it, and the fallback is what Fusion gets.
+  works in the host that needed it; the rate it finds there is the effect's, not
+  the fallback.
 - **As a transition on the Edit page** (24 frames on a 24 fps timeline, defaults,
   two test cards): Resolve lists and plays it, in the right order — the frames
   before it are exactly SourceFrom, then the border fading in over SourceFrom,

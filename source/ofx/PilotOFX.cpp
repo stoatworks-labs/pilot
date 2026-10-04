@@ -24,12 +24,13 @@
 /// frames, so a frame is a function of the controls and a time. OFX hands the
 /// time in FRAMES, and the border and Clip time sync want seconds, so it is
 /// divided by the output's frame rate -- which makes a frame render the same
-/// however the host reaches it. Resolve's Fusion page reports no frame rate
-/// at all, on the effect or on any clip, and the Support library throws when
-/// a property is missing; so the rate is read through framesPerSecond(),
-/// every read guarded, and falls back to 24, Resolve's timeline default. The
-/// other properties Fusion leaves out -- the frame range (reported as [0, 0]),
-/// the unmapped pair and the render-status pair -- this plugin never reads.
+/// however the host reaches it. Resolve's Fusion page reports the frame rate
+/// on the effect but on none of its clips, and the Support library throws
+/// when a property is missing; so the rate is read through framesPerSecond(),
+/// every read guarded, which finds the effect's there and falls back to 24,
+/// Resolve's timeline default, only where a host reports none. The other
+/// properties Fusion leaves out -- the clips' unmapped pair and the
+/// render-status pair -- this plugin never reads.
 ///
 /// --------------------------------------------------------- what is missing
 ///
@@ -123,8 +124,10 @@ constexpr const char* kPluginDescription =
 	"on Cut is the raw load from the first frame to the last.\n\n"
 	"Note: the Resolume build can also sync the load to the beat or the bar. "
 	"OpenFX hosts give a plugin no tempo, so those two Sync modes are absent "
-	"here rather than present and doing nothing. Fusion reports no frame rate; "
-	"there, time-based controls (Clip time and the border) assume 24 fps.\n\n"
+	"here rather than present and doing nothing. Resolve's Fusion page reports "
+	"the frame rate on the effect but not on its clips; the plugin reads the "
+	"effect's for Clip time and the border, and assumes 24 fps only where a "
+	"host reports none.\n\n"
 	"https://stoatworks-labs.com";
 
 // Script names. Hosts save projects against these, so they are permanent.
@@ -209,7 +212,8 @@ bool isPremultiplied( OFX::Clip* clip )
 }
 
 /// Resolve's timeline default, and what this plugin assumes when a host says
-/// nothing about time at all -- which Resolve's own Fusion page does.
+/// nothing about time at all. Resolve's own Fusion page is not such a host:
+/// it leaves the rate off the clips but reports it on the effect.
 constexpr double kFallbackFramesPerSecond = 24.0;
 
 /// One clip's frame rate, or 0 when the host does not say.
@@ -611,10 +615,10 @@ private:
 
 	/// Frames per second: the output clip's, else an input's, else the
 	/// effect's -- the first positive, finite one, each read guarded on its
-	/// own, because Resolve's Fusion page reports a frame rate on none of them
-	/// and the Support library throws on the read. 24 when nothing says, so a
-	/// frame there still renders, with the border and Clip time on a 24 fps
-	/// clock.
+	/// own, because Resolve's Fusion page reports a frame rate on none of the
+	/// clips and the Support library throws on the read; there it is the
+	/// effect's, the timeline's rate. 24 when nothing says, so a frame on such
+	/// a host still renders, with the border and Clip time on a 24 fps clock.
 	double framesPerSecond() const
 	{
 		for( OFX::Clip* clip : { dstClip, toClip, fromClip } )

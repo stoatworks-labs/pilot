@@ -178,9 +178,10 @@ What is different from the Resolume build, and why:
   plugin description says so). Manual and Clip time are there, at the same
   positions in the menu. Clip time runs on the host's timeline — the OFX time, in
   frames, over the output frame rate — so any frame renders the same however the
-  host reaches it, out of order or alone. **Fusion reports no frame rate; there,
-  time-based controls assume 24 fps** — Clip time's period and the border's
-  stripes run on a 24 fps clock in Resolve's Fusion page.
+  host reaches it, out of order or alone. **Resolve's Fusion page reports the
+  frame rate on the effect but not on its clips; the plugin reads the effect's,
+  and assumes 24 fps only where a host reports none** — so in Fusion, Clip
+  time's period and the border's stripes follow the timeline's rate.
 - **The transition is new**, and so are its Ends. In it, Progress and Sync are
   not shown (the host owns the position), and Background defaults to Clip, as
   above.
@@ -213,22 +214,24 @@ Mix settings; frame 30 rendered alone is byte-identical to frame 30 after frames
 an identity. Under Fade, Transition 0 and 1 are SourceFrom and SourceTo byte for
 byte, rendered and as an identity, in 8-bit and float; on the ramps the frame is
 within one level of ( 1 − s ) plain + s · Cut at the remapped progress; and
-between them it is that Cut, byte for byte. In the test host's Fusion mode
-(no frame rate anywhere, as Resolve's Fusion page) it renders — the build before
-the guard did not — exactly as a 24 fps host gets it. The Windows and Linux builds are compiled by CI
-and the Linux one is load-tested on Rocky 8.
+between them it is that Cut, byte for byte. In the test host's Fusion mode,
+which is stricter than Resolve's Fusion page and reports no frame rate anywhere,
+not even on the effect, it renders — the build before the guard did not —
+exactly as a 24 fps host gets it. The Windows and Linux builds are compiled by
+CI and the Linux one is load-tested on Rocky 8.
 
 **In a real host:** DaVinci Resolve Studio 21.1 on macOS, 2026-10-04, with the
 macOS build. As a Fusion tool (MediaIn → Pilot → MediaOut, rendered to PNG at
 1920×1080), six frames are byte-identical to the test host's render of the same
-frames at 24 fps — the fallback, since Fusion reports no frame rate. (An earlier
-build failed there for want of one; that is what the guard fixed.) As a
-transition on the Edit page (24 frames on a 24 fps timeline, default settings)
-it plays in the right order: the outgoing clip with the border fading in, the
-load, then the fade into the incoming clip. Fitted to the frames, the fade's
-weights at each end are 0.05, 0.38 and 0.78 — what the formula gives for
-Transition = (n + 0.5) / 24 — so its first and last frames are close to the
-clips but not exactly them (see Ends, above).
+frames at 24 fps; the plugin reads the effect's rate there, as Fusion reports
+none on its clips. (An earlier build failed there because it read a clip's rate
+unguarded; that is what the guard fixed.) As a transition on the Edit page (24
+frames on a 24 fps timeline, default settings) it plays in the right order: the
+outgoing clip with the border fading in, the load, then the fade into the
+incoming clip. Fitted to the frames, the fade's weights at each end are 0.05,
+0.38 and 0.78 — what the formula gives for Transition = (n + 0.5) / 24 — so its
+first and last frames are close to the clips but not exactly them (see Ends,
+above).
 
 **Not verified:** it has never been in Vegas, Nuke or Natron; in Resolve it has
 not been tried as an effect on the Edit or Color page, and how its controls

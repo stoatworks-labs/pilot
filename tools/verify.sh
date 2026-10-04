@@ -493,13 +493,14 @@ TRANSITION_PY
 				*) printf '   skipped: this ofxprobe cannot host a Transition (no --context); OFXPROBE=<a probe that can> to render one\n' ;;
 			esac
 
-			# Resolve's Fusion page reports no frame rate at all, and an
+			# Resolve's Fusion page reports no frame rate on its clips, and an
 			# unguarded read throws out of the render (found in a real Resolve
-			# 21.1). A probe with --quirks fusion leaves the same properties out;
-			# under it the plugin must render, and render exactly what a host
-			# reporting 24 fps gets -- the fallback -- as a filter on Clip time
-			# (the border and the period both run on that clock) and as a Fade
-			# transition. Skipped with a probe that has no --quirks.
+			# 21.1). A probe with --quirks fusion is stricter: it leaves the
+			# effect's rate out too, so under it the plugin must render, and
+			# render exactly what a host reporting 24 fps gets -- the
+			# fallback -- as a filter on Clip time (the border and the period
+			# both run on that clock) and as a Fade transition. Skipped with a
+			# probe that has no --quirks.
 			case "$help" in
 				*"--quirks"*)
 					tmp=$(mktemp -d)
@@ -524,18 +525,18 @@ for path, k in ((sys.argv[1], 0), (sys.argv[2], 1)):
 							--time 37 --frame-rate 24 --out-only "$tmp/at24-$name.ppm" >"$tmp/at24-$name.log" 2>&1 || quirk_ok=0
 						if ! cmp -s "$tmp/quirk-$name.ppm" "$tmp/at24-$name.ppm"; then
 							quirk_ok=0
-							printf '     %s: the Fusion render is not the 24 fps one\n' "$name"
+							printf '     %s: the --quirks fusion render is not the 24 fps one\n' "$name"
 							tail -5 "$tmp/quirk-$name.log" | sed 's/^/       /'
 						fi
 					done
 					if [ "$quirk_ok" = 1 ]; then
-						pass "renders under Fusion's missing frame rate, as a filter and a transition, exactly as at 24 fps"
+						pass "renders under --quirks fusion (no frame rate anywhere), as a filter and a transition, exactly as at 24 fps"
 					else
 						fail "the OpenFX plugin does not render under --quirks fusion as it does at 24 fps"
 					fi
 					rm -rf "$tmp"
 					;;
-				*) printf '   skipped: this ofxprobe has no --quirks; OFXPROBE=<a probe that has> to render as Fusion does\n' ;;
+				*) printf '   skipped: this ofxprobe has no --quirks; OFXPROBE=<a probe that has> to render under --quirks fusion\n' ;;
 			esac
 		fi
 	fi

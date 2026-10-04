@@ -75,9 +75,10 @@ in `Loader.cpp`.
   §9). `render::TransitionProgress` and `render::EffectStrength`; the filter never
   sees them. Names match lenticular's.
 - **Never read a host property unguarded in the OpenFX plugin.** Resolve's Fusion
-  page reports no frame rate at all and the Support library throws on the read;
-  `framesPerSecond()` tries the output clip, the inputs, then the effect, each in
-  its own try/catch, and falls back to 24.
+  page reports no frame rate on its clips (only on the effect) and the Support
+  library throws on the read; `framesPerSecond()` tries the output clip, the
+  inputs, then the effect, each in its own try/catch, and falls back to 24 only
+  where a host reports none.
 - `OFXPROBE=<an ofxprobe with --context> tools/verify.sh` also renders the
   transition through the host; the stock probe skips that step.
 - **The RGBA16F threshold is rounded toward zero** in `render::Half`, because the M4
@@ -137,7 +138,7 @@ in `Loader.cpp`.
 - No factory presets.
 - The OpenFX build has been in one real host: DaVinci Resolve Studio 21.1 on macOS
   (2026-10-04). As a Fusion tool it is byte-identical to the test host at 24 fps
-  (the guard's fallback; an earlier build without the guard failed there); as an
+  (an earlier build, reading a clip's frame rate unguarded, failed there); as an
   Edit-page transition it plays in the right order with both fades. Never tried as
   an Edit/Color-page effect, and never in Vegas, Nuke or Natron. The Windows and
   Linux OpenFX builds have never rendered a frame.
