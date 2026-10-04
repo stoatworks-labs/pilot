@@ -14,7 +14,8 @@ one anybody chose.
 
 *Rendered by the plugin's own offline harness, not captured from Resolume.*
 
-> **Before you rely on this:** released at **v0.1.0**, and honestly early. An
+> **Before you rely on this:** released at **v0.2.0**, which adds the OpenFX
+> build for Resolve, Vegas, Nuke and Natron, and honestly early. An
 > offline harness driving the real plugin class proves the address order agrees
 > with an independent derivation for all 6144 addresses, bitwise, and that the
 > rendered frame matches it for all 49,152 screen pixels at 1920×1080 and
@@ -22,8 +23,13 @@ one anybody chose.
 > are confirmed to change the picture. It has **never been loaded into Resolume
 > on macOS**, so how the controls *present* in the inspector is untested.
 > On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every control matching what the plugin declares — on software rendering, so that says nothing about a GPU.
-> The OpenFX build has rendered only in a test host, **never yet in Resolve** or
-> any other real OpenFX application.
+> The OpenFX build has been in one real host, DaVinci Resolve Studio 21.1 on
+> macOS: as a Fusion tool it renders exactly what the test host renders, and as
+> a transition on the Edit page it plays in the right order, fading in from the
+> outgoing clip and out to the incoming one — though its first and last frames
+> come close to the clips rather than exactly (see [OpenFX](#openfx--resolve-vegas-nuke-natron)).
+> It has **never been in Vegas, Nuke or Natron**, and the Windows and Linux
+> OpenFX builds have never rendered in any host.
 > **Try it on a spare layer first**, and please report anything that misbehaves.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human
@@ -295,10 +301,13 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
 - **At the end of an error hold the picture jumps**, for one frame, to the
   retry's progress. A real machine drew the retry over the old picture.
 - **No factory presets.**
-- **The OpenFX build has never rendered in Resolve**, Vegas, Nuke or Natron —
-  only in a command-line test host. How its controls present there, and how a
-  host offers the transition and its Ends, are untested. It has no Beat or Bar
-  sync.
+- **The OpenFX build has been in one real host only**: DaVinci Resolve Studio
+  21.1 on macOS, as a Fusion tool and as a transition on the Edit page. It has
+  never been in Vegas, Nuke or Natron, nor tried as an effect on Resolve's Edit
+  or Color page, and the Windows and Linux builds have never rendered in a host.
+  In Resolve a Fade transition's first and last frames are close to the clips,
+  not exactly them (see [OpenFX](#openfx--resolve-vegas-nuke-natron)). It has
+  no Beat or Bar sync.
 - **There is a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
   It is a port to a web page, not the plugin: the shaders run in WebGL2 and any CPU
   half is rewritten in JavaScript. The page lists what it does not reproduce.
@@ -310,8 +319,8 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
 The same effect builds as an OpenFX plugin for DaVinci Resolve (Edit and Color
 pages, and Fusion), Vegas Pro, Nuke and Natron. It is a separate download —
 `pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip` or
-`pilot-ofx-linux-x86_64.zip`, from the release after v0.1.0 — and it goes in the
-OpenFX folder, not Resolume's:
+`pilot-ofx-linux-x86_64.zip`, from v0.2.0 on — and it goes in the OpenFX
+folder, not Resolume's. Unzip it and copy `Pilot.ofx.bundle` into:
 
 ```
 macOS    /Library/OFX/Plugins/
@@ -342,6 +351,15 @@ finishes:
   the middle; and over the last End Length it fades from the loaded screen into
   the incoming clip. End Length is 0.15 by default — the first and last 15% —
   and goes up to 0.5, where the load happens all at once at the midpoint.
+
+  "Exactly" depends on the host asking for the very start and end of the
+  transition, and **DaVinci Resolve does not**: it asks for the middle of each
+  frame. So in Resolve the first frame is already a little way into the fade —
+  a faint border over the outgoing clip — and the last is not quite the
+  incoming clip; the edit then cuts to the clean clip. In a one-second
+  transition at 24 fps, with End Length at its default, each end is about 5%
+  of the way into its fade, so the last frame is about 95% the incoming clip.
+  A longer transition or a longer End Length makes that step smaller.
 - **Cut** — the raw load, from the first frame to the last, as Resolume shows
   it: the border is there from the very first frame, and the last frame is the
   fully loaded Spectrum screen, after which the edit cuts to the real incoming

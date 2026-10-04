@@ -3,10 +3,11 @@
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. **It has never been loaded
 > into Resolume on macOS** (see [Status](#status) for Windows), and **the OpenFX
-> build has never rendered in DaVinci Resolve or any other real OpenFX host** (an
-> earlier build failed on Resolve's Fusion page; the fix is checked in a test host
-> only). Everything below is measured offline, through the real plugin class in a
-> headless GL context: the address order exists twice — as the bit
+> build has been in one real OpenFX host only** — DaVinci Resolve Studio 21.1 on
+> macOS, as a Fusion tool and as an Edit-page transition (see
+> [OpenFX](#openfx--resolve-vegas-nuke-natron)). Everything else below is
+> measured offline, through the real plugin class in a headless GL context: the
+> address order exists twice — as the bit
 > layout and as a plain nested loop — and `pttest --agree` proves the two agree for
 > all 6144 addresses bitwise; `pttest --reveal` renders through the shipping shader
 > and checks all 49,152 pixels against the independently written table, at two
@@ -124,10 +125,11 @@ order, the tape and its failures, the machines, the controls and every value the
 shaders are handed — and the three shaders are copied into C++ statement for
 statement (`source/Render.cpp`, marked `//= mirrored:` in both places).
 
-The OpenFX zips — `pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip`
-and `pilot-ofx-linux-x86_64.zip` — ship from the release after v0.1.0, which has
-none; until then, build it (below). Copy `Pilot.ofx.bundle` into the standard
-OpenFX folder and restart the host:
+It ships from **v0.2.0** as its own downloads, separate from the Resolume ones:
+`pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip` and
+`pilot-ofx-linux-x86_64.zip`, on the
+[releases page](https://github.com/stoatworks-labs/pilot/releases). Unzip it,
+copy `Pilot.ofx.bundle` into the standard OpenFX folder and restart the host:
 
 ```
 macOS    /Library/OFX/Plugins/
@@ -155,6 +157,16 @@ The transition has an **Ends** group of its own (the filter does not):
   premultiplied colour. End Length runs to 0.5, where the load happens at the
   midpoint; at 0 the tape fills the whole transition and only the first and
   last frames are the clips.
+
+  "Exactly" is at Transition 0 and 1, and a host that never asks for those
+  values never gets them. **DaVinci Resolve asks for the middle of each frame**,
+  (n + 0.5) / N, so there the first frame is already a little into the opening
+  fade and the last is not quite the incoming clip, and the edit then cuts to
+  the clean clip. In a 24-frame transition at the default End Length both end
+  frames are about 5% into their fade: the first shows a faint border over the
+  outgoing clip, the last is about 95% the incoming clip. A longer transition
+  or End Length makes that step smaller and a shorter one larger; at End
+  Length 0 Resolve shows no clean frame at all.
 - **Cut** is the raw load over the whole transition, as Resolume would show it:
   the first frame already has the border, and the last is the Spectrum screen,
   after which the edit cuts to the real picture.
@@ -204,18 +216,29 @@ within one level of ( 1 − s ) plain + s · Cut at the remapped progress; and
 between them it is that Cut, byte for byte. In the test host's Fusion mode
 (no frame rate anywhere, as Resolve's Fusion page) it renders — the build before
 the guard did not — exactly as a 24 fps host gets it. The Windows and Linux builds are compiled by CI
-and the Linux one is load-tested on Rocky 8. **Not verified:** it has never
-rendered in DaVinci Resolve, Vegas, Nuke or Natron — an earlier build, loaded into
-Resolve 21.1's Fusion page, failed there for want of a frame rate, and the fix is
-checked only in a test host that withholds the same properties — so how its
-controls present, and whether a host offers the Transition context where
-expected, is untested; the Windows and Linux builds have never rendered a frame; and 16-bit
-images have never been fed to it.
+and the Linux one is load-tested on Rocky 8.
+
+**In a real host:** DaVinci Resolve Studio 21.1 on macOS, 2026-10-04, with the
+macOS build. As a Fusion tool (MediaIn → Pilot → MediaOut, rendered to PNG at
+1920×1080), six frames are byte-identical to the test host's render of the same
+frames at 24 fps — the fallback, since Fusion reports no frame rate. (An earlier
+build failed there for want of one; that is what the guard fixed.) As a
+transition on the Edit page (24 frames on a 24 fps timeline, default settings)
+it plays in the right order: the outgoing clip with the border fading in, the
+load, then the fade into the incoming clip. Fitted to the frames, the fade's
+weights at each end are 0.05, 0.38 and 0.78 — what the formula gives for
+Transition = (n + 0.5) / 24 — so its first and last frames are close to the
+clips but not exactly them (see Ends, above).
+
+**Not verified:** it has never been in Vegas, Nuke or Natron; in Resolve it has
+not been tried as an effect on the Edit or Color page, and how its controls
+present there is not recorded; the Windows and Linux builds have never rendered
+a frame in any host; and 16-bit images have never been fed to it.
 
 ## Status
 
-**v0.1.0, built 2026-09-22 and released 2026-09-23, and honestly
-early.**
+**v0.2.0, which adds the OpenFX build, and still honestly early.** (v0.1.0, the
+Resolume build alone, was built 2026-09-22 and released 2026-09-23.)
 
 User guide: [docs/USER-GUIDE.md](docs/USER-GUIDE.md), also at
 https://stoatworks-labs.com/software/pilot/guide/
@@ -246,8 +269,9 @@ that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
 Not done, and not pretended otherwise: no factory presets, the universal build has
-never run on an Intel Mac, and the OpenFX build has never rendered in a real
-OpenFX host (see [above](#openfx--resolve-vegas-nuke-natron)). The
+never run on an Intel Mac, and the OpenFX build has been in one real OpenFX host
+only, DaVinci Resolve 21.1 on macOS, with its Windows and Linux builds in none
+(see [above](#openfx--resolve-vegas-nuke-natron)). The
 [browser demo](https://pilot-demo.stoatworks-labs.com) runs the plugin's own raster,
 attribute and compose shaders ported to WebGL2, and `demo/tools/check_shaders.py` holds
 that GLSL character-for-character against `source/shaders/` — but the tape model beside

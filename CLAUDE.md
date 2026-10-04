@@ -4,7 +4,8 @@ A ZX Spectrum tape loader as an FFGL **effect** for Resolume Arena/Avenue, and a
 OpenFX effect **and transition** for Resolve/Vegas/Nuke/Natron (`Pilot.ofx.bundle`,
 CPU render, macOS universal / Win64 / Linux x86_64). C++/GLSL, CMake MODULE →
 universal `.bundle` (macOS) + Windows `.dll`. MIT. Public at
-github.com/stoatworks-labs/pilot, released at v0.1.0 on 2026-09-23. 19 parameters
+github.com/stoatworks-labs/pilot; first released at v0.1.0 on 2026-09-23, and v0.2.0
+adds the OpenFX build. 19 parameters
 (14 controls + a five-entry About block). User guide: `docs/USER-GUIDE.md` (the only
 copy anyone edits), rendered to `docs/USER-GUIDE.pdf` and
 https://stoatworks-labs.com/software/pilot/guide/ by the website's `build_guides.py`.
@@ -68,8 +69,11 @@ in `Loader.cpp`.
   character for character). Edit both, then run `pttest --cpu --transition`.
 - **The transition has Ends** (OpenFX only, transition context only): `ends` Fade
   (default) / Cut, `endLength` 0..0.5 (0.15). Fade starts on exactly SourceFrom and
-  ends on exactly SourceTo; Cut is the raw load. `render::TransitionProgress` and
-  `render::EffectStrength`; the filter never sees them. Names match lenticular's.
+  ends on exactly SourceTo at T = 0 and 1; Cut is the raw load. Resolve never asks
+  for 0 or 1 — it sends T = (n + 0.5) / N — so there the end frames are ~5% into
+  their ramps (24 frames, L 0.15) and the edit cuts to the clean clip (AGENTS.md
+  §9). `render::TransitionProgress` and `render::EffectStrength`; the filter never
+  sees them. Names match lenticular's.
 - **Never read a host property unguarded in the OpenFX plugin.** Resolve's Fusion
   page reports no frame rate at all and the Support library throws on the read;
   `framesPerSecond()` tries the output clip, the inputs, then the effect, each in
@@ -131,11 +135,12 @@ in `Loader.cpp`.
 - Never loaded into Resolume on macOS, and never installed into Arena there. On Windows, a CI build passed Resolume Arena 7.27.1's gate on llvmpipe on 2026-09-23, 9 of 9 (see README Status).
 - The universal build has never run on an Intel Mac.
 - No factory presets.
-- The OpenFX build has never rendered in Resolve, Vegas, Nuke or Natron. An earlier
-  build failed on Resolve 21.1's Fusion page (no frame rate); the guard is checked
-  only in the test host's `--quirks fusion` mode. Otherwise it has run only in a
-  command-line test host (an extended ofxprobe), in the Filter and Transition
-  contexts. The Windows and Linux OpenFX builds have never rendered a frame.
+- The OpenFX build has been in one real host: DaVinci Resolve Studio 21.1 on macOS
+  (2026-10-04). As a Fusion tool it is byte-identical to the test host at 24 fps
+  (the guard's fallback; an earlier build without the guard failed there); as an
+  Edit-page transition it plays in the right order with both fades. Never tried as
+  an Edit/Color-page effect, and never in Vegas, Nuke or Natron. The Windows and
+  Linux OpenFX builds have never rendered a frame.
 - Render cost figures are macOS-only.
 
 ## Browser demo
