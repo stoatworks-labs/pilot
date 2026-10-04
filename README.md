@@ -35,15 +35,16 @@ the end produces the pattern it produces, and nobody chose it.
 
 ## Download
 
-**[v0.1.0](https://github.com/stoatworks-labs/pilot/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+**[v0.2.0](https://github.com/stoatworks-labs/pilot/releases/tag/v0.2.0)** — prebuilt for macOS, Windows and Linux. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`pilot-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/pilot/releases/download/v0.1.0/pilot-0.1.0-macos-universal.dmg) | 209 KB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`pilot-macos-universal.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-macos-universal.zip) | 173 KB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`pilot-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/pilot/releases/download/v0.2.0/pilot-0.2.0-macos-universal.dmg) | 232 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`pilot-macos-universal.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-macos-universal.zip) | 190 KB |
+| Universal (Apple Silicon + Intel) · .zip archive (OpenFX — Resolve, Vegas, Nuke) | [`pilot-ofx-macos-universal.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-ofx-macos-universal.zip) | 265 KB |
 
 </details>
 
@@ -52,8 +53,18 @@ the end produces the pattern it produces, and nobody chose it.
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .exe installer | [`pilot-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/pilot/releases/download/v0.1.0/pilot-0.1.0-windows-x86_64-setup.exe) | 216 KB |
-| x64 · .zip archive | [`pilot-windows-x86_64.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-windows-x86_64.zip) | 110 KB |
+| x64 · .exe installer | [`pilot-0.2.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/pilot/releases/download/v0.2.0/pilot-0.2.0-windows-x86_64-setup.exe) | 221 KB |
+| x64 · .zip archive | [`pilot-windows-x86_64.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-windows-x86_64.zip) | 111 KB |
+| x64 · .zip archive (OpenFX — Resolve, Vegas, Nuke) | [`pilot-ofx-windows-x86_64.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-ofx-windows-x86_64.zip) | 75 KB |
+
+</details>
+
+<details>
+<summary><b>Linux</b> — x64</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| x64 · .zip archive (OpenFX — Resolve, Vegas, Nuke) | [`pilot-ofx-linux-x86_64.zip`](https://github.com/stoatworks-labs/pilot/releases/latest/download/pilot-ofx-linux-x86_64.zip) | 718 KB |
 
 </details>
 
