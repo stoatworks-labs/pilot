@@ -740,6 +740,21 @@ the guarded macOS build):
   Windows or Linux. How the controls present in Resolve's inspector is not
   recorded.
 
+### Declare the output frame-varying, or Fusion repeats a generator's first frame
+
+`getClipPreferences` calls `setOutputFrameVarying( true )`. Clip time and the border
+run off the frame's time. Without that declaration a host may treat the output as
+fixed while the inputs and parameters hold still. Measured 2026-10-04 in Resolve
+Studio 21.1's Fusion page: every fleet generator rendered frames 20-22
+byte-identical, none having declared it, and with the declaration they animate.
+
+A tool fed by a MediaIn is re-rendered every frame either way, so in Fusion this
+changes nothing visible; the declaration is still the correct one, and other hosts
+(Nuke, Natron) cache by it.
+
+The flag changes no pixels: `ofxprobe` renders byte-identical with and without it,
+on a moving sequence, on a still and under `--quirks fusion`.
+
 ## Notes
 
 Cross-cutting fleet knowledge lives in
