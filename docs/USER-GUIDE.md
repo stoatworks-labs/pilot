@@ -1,35 +1,43 @@
 # Pilot user guide
 
-Pilot is **a ZX Spectrum tape loader for [Resolume](https://resolume.com) Arena
-and Avenue**, as an FFGL effect — and, as an OpenFX effect and transition, for
-DaVinci Resolve, Vegas, Nuke and Natron (see
-[OpenFX](#openfx--resolve-vegas-nuke-natron)). The clip arrives the way a
-Spectrum loaded a screen: in screen-memory order, at the baud rate, monochrome
-first and colour last, with the border striped by the loading signal itself. It
-is a transition in practice — but not a shape moving across the frame. It is an
-**address order**, and the pattern it makes is the one the hardware made, not
-one anybody chose.
+Pilot is a ZX Spectrum tape loader for [Resolume](https://resolume.com) Arena
+and Avenue, as an FFGL effect, and for DaVinci Resolve, Vegas, Nuke and Natron as
+an OpenFX effect and transition (see [OpenFX](#openfx--resolve-vegas-nuke-natron)).
+Your clip arrives the way a Spectrum loaded a screen: in screen-memory order, at
+the baud rate, monochrome first and colour last, with the border striped by the
+loading signal itself.
+
+In practice it's a transition, but it isn't a shape moving across the frame. It's
+an **address order**, and the pattern it makes is the one the hardware made rather
+than one anybody chose. Anyone who ever waited for a Spectrum game to load will
+know it at once.
 
 ![A ZX Spectrum tape load in progress: two thirds of a monochrome picture on screen, the last third arriving in an eight-line interleave, framed by yellow and blue border stripes](thumb.png)
 
-*Rendered by the plugin's own offline harness, not captured from Resolume.*
+*Rendered by the plugin's own offline harness rather than captured from Resolume.*
 
-> **Before you rely on this:** released at **v0.2.0**, which adds the OpenFX
-> build for Resolve, Vegas, Nuke and Natron, and honestly early. An
-> offline harness driving the real plugin class proves the address order agrees
-> with an independent derivation for all 6144 addresses, bitwise, and that the
-> rendered frame matches it for all 49,152 screen pixels at 1920×1080 and
-> 640×480, at six points in the load, with zero disagreements; all 14 controls
-> are confirmed to change the picture. It has **never been loaded into Resolume
-> on macOS**, so how the controls *present* in the inspector is untested.
-> On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every control matching what the plugin declares — on software rendering, so that says nothing about a GPU.
+> **Before you rely on this:** it's at **v0.2.0**, which adds the OpenFX build
+> for Resolve, Vegas, Nuke and Natron, and still early days. An offline harness
+> driving the real plugin class proves the address order agrees with an
+> independent derivation for all 6144 addresses, bitwise, and that the rendered
+> frame matches it for all 49,152 screen pixels at 1920×1080 and 640×480, at six
+> points in the load, with zero disagreements; all 14 controls are confirmed to
+> change the picture.
+>
+> It has **never been loaded into Resolume on macOS**, so how the controls *look*
+> in the inspector is untested. On Windows, a build of v0.1.0 loads, registers and
+> renders in Resolume Arena 7.27.1, with every control matching what the plugin
+> declares. That was on software rendering, so it says nothing about a GPU.
+>
 > The OpenFX build has been in one real host, DaVinci Resolve Studio 21.1 on
-> macOS: as a Fusion tool it renders exactly what the test host renders, and as
-> a transition on the Edit page it plays in the right order, fading in from the
-> outgoing clip and out to the incoming one — though its first and last frames
-> come close to the clips rather than exactly (see [OpenFX](#openfx--resolve-vegas-nuke-natron)).
-> It has **never been in Vegas, Nuke or Natron**, and the Windows and Linux
-> OpenFX builds have never rendered in any host.
+> macOS. As a Fusion tool it renders exactly what the test host renders, and as a
+> transition on the Edit page it plays in the right order, fading in from the
+> outgoing clip and out to the incoming one, though its first and last frames come
+> close to the clips rather than matching them exactly (see
+> [OpenFX](#openfx--resolve-vegas-nuke-natron)). It has **never been in Vegas, Nuke
+> or Natron**, and the Windows and Linux OpenFX builds have never rendered in any
+> host.
+>
 > **Try it on a spare layer first**, and please report anything that misbehaves.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human
@@ -46,14 +54,14 @@ macOS    ~/Documents/Resolume Arena/Extra Effects/
 Windows  %USERPROFILE%\Documents\Resolume Arena\Extra Effects\
 ```
 
-Avenue uses the same layout under its own folder name. It then appears in the
+Avenue uses the same layout under its own folder name. It then shows up in the
 effects browser as **SW Pilot**.
 
 The macOS download is a universal build (Apple silicon and Intel) as a `.dmg`
 or a `.zip`; Windows is x64, as an installer or a `.zip`. The macOS build is
-**Developer ID-signed and notarised**, so it simply loads. The Windows build is
-not code-signed: the plugin file itself loads normally, and only the installer
-trips SmartScreen, once — **More info** → **Run anyway**.
+Developer ID-signed and notarised, so it just loads. The Windows build isn't
+code-signed: the plugin file itself loads normally, and only the installer
+trips SmartScreen, once: **More info** → **Run anyway**.
 
 ---
 
@@ -61,10 +69,10 @@ trips SmartScreen, once — **More info** → **Run anyway**.
 
 Put SW Pilot on a layer with a clip on it and leave every control alone. You
 get a Spectrum screen **part way through loading**: a black-and-white picture of
-your clip filling in, in bands, inside a border of yellow and blue stripes. That
-is the ZX 48 at its own rate, with **Progress** at 45% and **Sync** on Manual.
+your clip filling in, in bands, inside a border of yellow and blue stripes.
+That's the ZX 48 at its own rate, with **Progress** at 45% and **Sync** on Manual.
 
-There is no trigger button. **Where the load has got to is Progress**, and
+There's no trigger button. **Where the load has got to is Progress**, and
 nothing else:
 
 - **Manual** (the default) — drag Progress from 0 to 1 and the tape plays
@@ -76,7 +84,7 @@ nothing else:
   starts from.
 
 Watch one whole load and three things happen that nobody designed. The picture
-does not wipe down the screen: it arrives in three thirds, each filling in as an
+doesn't wipe down the screen: it arrives in three thirds, each filling in as an
 eight-line venetian blind. It stays **monochrome** until about 89% of the way
 through, and then the colour lands all at once, because the colour bytes sit
 after the picture bytes on the tape. And the border stripes are the tape signal
@@ -94,14 +102,14 @@ you pick.
 **Baud** — a trim around the machine's own rate rather than an absolute number:
 ×¼ at the bottom, the machine's real rate at the **centre** (the default), ×4 at
 the top. It sets how fast the border stripes run and how long a load takes in
-Clip time sync. **It does not change how fast the picture arrives in Manual** —
-that is Progress's job, on purpose: a real ZX 48 load is 37 seconds, and a
-37-second transition you cannot scrub is no use to anybody.
+Clip time sync. **It doesn't change how fast the picture arrives in Manual.**
+That's Progress's job, on purpose: a real ZX 48 load is 37 seconds, and a
+37-second transition you can't scrub is no use to anybody.
 
 **Ink** and **Paper** — the power-on attribute: the two colours the picture
 wears **before its own colours arrive**. Each is one of the Spectrum's eight
 colours: Black, Blue, Red, Magenta, Green, Cyan, Yellow, White. A Spectrum powers
-up black ink on white paper, and so does this. They are also the colours the
+up black ink on white paper, and so does this. They're also the colours the
 loading-error message is printed in, and Paper is what the Paper background
 shows.
 
@@ -143,11 +151,11 @@ they assume 120 BPM.
 **Error Rate** — the chance that each block of the tape fails, from nothing (the
 default) up to one in two at the top of the slider. The tape is 27 blocks of 256
 bytes. When a block fails, the Spectrum's own report is printed over whatever
-had arrived —
+had arrived:
 
     R Tape loading error, 0:1
 
-— and the picture **holds** for one block's worth of tape. Then the load starts
+The picture then **holds** for one block's worth of tape. Then the load starts
 again from an empty screen with whatever tape is left. The failures are seeded:
 the same settings fail in the same places every time, so scrubbing Progress back
 over a failure shows the same failure again, not a new roll of the dice. Even a
@@ -162,31 +170,31 @@ a failure still holds and restarts the picture; it just does it silently.
 
 ## The Border group
 
-**Border On** — whether there is a border at all. Off is not a colour: it takes
+**Border On** — whether there's a border at all. Off isn't a colour: it takes
 the border away, and the screen fills the whole composition. **Border Width**
 then has nothing to act on.
 
 **Border Width** — how much of the composition the border takes off **each
 edge**, from none up to a quarter. The default is about 8%, which is close to
 what a Spectrum's border was. The clip is squeezed into whatever is left,
-aspect and all, so the whole of it arrives framed — on a 16:9 composition a
+aspect and all, so the whole of it arrives framed, and on a 16:9 composition a
 Spectrum pixel is wider than it is tall, as it was on a widescreen television.
 
 **Pilot Length** — how much of the Progress range is spent on the pilot tone
 before the first byte lands, from none to half of it. The default is about 8%.
 During the pilot the screen shows only the **Background** and the border shows
-the machine's pilot colours — red and cyan on a ZX 48 — changing to its data
-colours the moment the first byte arrives. At zero there is no pilot and the
+the machine's pilot colours (red and cyan on a ZX 48), changing to its data
+colours the moment the first byte arrives. At zero there's no pilot and the
 picture starts at once.
 
 ---
 
 ## The machines
 
-The border is not decoration. The Spectrum's border was told the state of the
+The border isn't decoration. The Spectrum's border was told the state of the
 tape signal and the beam painted it as it scanned, so the stripes are horizontal
 and there are **baud ÷ 50** pairs of them from the top of the frame to the
-bottom — 30 on a ZX 48, 45 on a ZX 128, 40 on the Amstrad. Turn **Baud** up and
+bottom: 30 on a ZX 48, 45 on a ZX 128, 40 on the Amstrad. Turn **Baud** up and
 there are more, thinner stripes.
 
 | Type | Rate | Pilot tone | Data |
@@ -197,33 +205,34 @@ there are more, thinner stripes.
 | **Amstrad** | 2000 baud | bright cyan / blue stripes | bright red / yellow stripes |
 
 **Only the ZX 48 models a documented routine**: its rate and its red/cyan then
-yellow/blue are the 48K ROM loader's own. The other three are honest *looks* in
-the same shape. The ZX 128 is what 128K games actually shipped with — a fast
-loader on Spectrum hardware — rather than the 128's ROM, which loaded exactly
+yellow/blue are the 48K ROM loader's own. The other three are just *looks* in
+the same shape. The ZX 128 is what 128K games actually shipped with (a fast
+loader on Spectrum hardware) rather than the 128's ROM, which loaded exactly
 like the 48. The C64 turbo's border is one colour at a time, changing once per
 byte at random and never to black, so it reads as a flicker rather than stripes.
-The Amstrad's colours are chosen to be distinct, not measured from a machine.
+I chose the Amstrad's colours to be distinct rather than measuring them from a
+machine.
 
 ---
 
 ## The loading error
 
-A real Spectrum did not clear the screen when a load failed. It printed the
+A real Spectrum didn't clear the screen when a load failed. It printed the
 report over whatever had arrived and stopped. Pilot does the same: while the
 message is up, the picture freezes at what the failed attempt had reached; when
 it goes, the retry takes over from an empty screen. The report is drawn along
 the bottom character row of the screen, in the power-on **Ink** on **Paper**.
 
-Because the retry starts with only the tape that is left, a load with **Error
-Rate** up can reach Progress 1 part-loaded — on a real machine you would rewind
-the tape and press play again. In Manual that is dragging Progress back; in the
+Because the retry starts with only the tape that's left, a load with **Error
+Rate** up can reach Progress 1 part-loaded. On a real machine you'd rewind the
+tape, sigh, and press play again. In Manual that's dragging Progress back; in the
 sync modes it happens on the next loop.
 
 ---
 
 ## Output
 
-**Background** — what an address that has **not arrived yet** shows:
+**Background** — what an address that **hasn't arrived yet** shows:
 
 - **Paper** (the default) — the power-on Paper colour, which is what a real
   machine showed.
@@ -235,7 +244,7 @@ sync modes it happens on the next loop.
 It changes the screen area only, never the border.
 
 **Mix** — dry/wet against the untouched clip. At **0** the output is the input,
-byte for byte, whatever everything else is set to — measured, not assumed. At
+byte for byte, whatever everything else is set to (measured, not assumed). At
 full Mix the output is opaque.
 
 ---
@@ -243,23 +252,23 @@ full Mix the output is opaque.
 ## How it works
 
 The Spectrum's screen is 6144 bytes of picture followed by 768 bytes of colour,
-and the picture is not stored top to bottom. The byte holding a pixel lives at
+and the picture isn't stored top to bottom. The byte holding a pixel lives at
 
     third × 2048  +  line × 256  +  character row × 32  +  column byte
 
-— which third of the screen, then which of the eight lines inside a character
+That's which third of the screen, then which of the eight lines inside a character
 cell, then which character row within that third. Fill the memory from the
 start of the tape to the end and the screen fills in that order: the first line
 of every character row in the top third, then the second line of each, and so on,
-then the middle third, then the bottom. That is the venetian blind. Pilot does
+then the middle third, then the bottom. That's the venetian blind. Pilot does
 nothing but fill the addresses in order.
 
-The colour comes last because the 768 attribute bytes come last — one byte per
+The colour comes last because the 768 attribute bytes come last: one byte per
 8×8 cell, giving that cell one ink, one paper and a BRIGHT bit. To make those,
 Pilot shrinks the clip to the Spectrum's 256×192, splits each cell into its
 darker and lighter halves, and gives each half the nearest of the eight colours.
 Which half a pixel belongs to is settled from the picture, so the pattern of the
-monochrome phase does not change when colour arrives — only its two colours do.
+monochrome phase doesn't change when colour arrives; only its two colours do.
 
 ---
 
@@ -287,14 +296,14 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
 - **Never loaded into Resolume on macOS.** Whether the four groups read sensibly
   in the inspector, whether Ink and Paper show as colour lists, and how Arena's
   own textures behave are all untested.
-- **Baud does not drive the reveal in Manual.** Use Clip time if you want the
+- **Baud doesn't drive the reveal in Manual.** Use Clip time if you want the
   tape to take as long as a real one.
 - **The four machines are four looks.** Only the ZX 48 models a real routine,
   and none has been compared against a real tape or an emulator. Every machine
   loads a Spectrum screen.
 - **Colours are recomputed every frame.** On moving footage a cell's two
-  colours change *during* the load, which a real tape never could — its screen
-  was converted once, before it was recorded.
+  colours change *during* the load, which a real tape never could, since its
+  screen was converted once, before it was recorded.
 - **Clip time runs off Resolume's clock** and loops, rather than following the
   clip's own playhead.
 - **Bar is always four beats.**
@@ -308,19 +317,19 @@ The OpenFX build renders on the CPU and costs more: about 5 ms a frame at
   In Resolve a Fade transition's first and last frames are close to the clips,
   not exactly them (see [OpenFX](#openfx--resolve-vegas-nuke-natron)). It has
   no Beat or Bar sync.
-- **There is a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
-  It is a port to a web page, not the plugin: the shaders run in WebGL2 and any CPU
-  half is rewritten in JavaScript. The page lists what it does not reproduce.
+- **There's a browser demo** at [pilot-demo.stoatworks-labs.com](https://pilot-demo.stoatworks-labs.com).
+  It's a port to a web page rather than the plugin: the shaders run in WebGL2 and any CPU
+  half is rewritten in JavaScript. The page lists what it doesn't reproduce.
 
 ---
 
 ## OpenFX — Resolve, Vegas, Nuke, Natron
 
 The same effect builds as an OpenFX plugin for DaVinci Resolve (Edit and Color
-pages, and Fusion), Vegas Pro, Nuke and Natron. It is a separate download —
-`pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip` or
-`pilot-ofx-linux-x86_64.zip`, from v0.2.0 on — and it goes in the OpenFX
-folder, not Resolume's. Unzip it and copy `Pilot.ofx.bundle` into:
+pages, and Fusion), Vegas Pro, Nuke and Natron. It's a separate download
+(`pilot-ofx-macos-universal.zip`, `pilot-ofx-windows-x86_64.zip` or
+`pilot-ofx-linux-x86_64.zip`, from v0.2.0 on), and it goes in the OpenFX
+folder rather than Resolume's. Unzip it and copy `Pilot.ofx.bundle` into:
 
 ```
 macOS    /Library/OFX/Plugins/
@@ -328,7 +337,7 @@ Windows  C:\Program Files\Common Files\OFX\Plugins\
 Linux    /usr/OFX/Plugins/
 ```
 
-Restart the host and it appears as **Pilot**, under **Stoatworks**, in two
+Restart the host and it shows up as **Pilot**, under **Stoatworks**, in two
 places:
 
 - **As an effect** on a clip, with the controls this guide describes. Progress
@@ -336,9 +345,9 @@ places:
   runs at the baud rate along the timeline and loops.
 - **As a transition** between two clips. The transition's own position drives
   the tape: the incoming clip is the picture that loads, and the outgoing clip
-  is what every address that has not arrived yet shows. **Background** starts on
-  **Clip** here — choose Paper for a machine's blank screen instead — and
-  **Mix** fades the load against the outgoing clip. There is no Progress or
+  is what every address that hasn't arrived yet shows. **Background** starts on
+  **Clip** here (choose Paper for a machine's blank screen instead), and
+  **Mix** fades the load against the outgoing clip. There's no Progress or
   Sync, because the transition is the clock.
 
 The transition has one more group, **Ends**, which decides how it starts and
@@ -349,13 +358,13 @@ finishes:
   jump at either edit. Over the first **End Length** it fades from the outgoing
   clip into the empty Spectrum screen and its striped border; the tape loads in
   the middle; and over the last End Length it fades from the loaded screen into
-  the incoming clip. End Length is 0.15 by default — the first and last 15% —
+  the incoming clip. End Length is 0.15 by default (the first and last 15%)
   and goes up to 0.5, where the load happens all at once at the midpoint.
 
   "Exactly" depends on the host asking for the very start and end of the
-  transition, and **DaVinci Resolve does not**: it asks for the middle of each
-  frame. So in Resolve the first frame is already a little way into the fade —
-  a faint border over the outgoing clip — and the last is not quite the
+  transition, and **DaVinci Resolve doesn't**: it asks for the middle of each
+  frame. So in Resolve the first frame is already a little way into the fade
+  (a faint border over the outgoing clip), and the last isn't quite the
   incoming clip; the edit then cuts to the clean clip. In a one-second
   transition at 24 fps, with End Length at its default, each end is about 5%
   of the way into its fade, so the last frame is about 95% the incoming clip.
@@ -365,18 +374,18 @@ finishes:
   fully loaded Spectrum screen, after which the edit cuts to the real incoming
   picture.
 
-What the OpenFX build does not have:
+What the OpenFX build doesn't have:
 
-- **Beat and Bar sync.** An OpenFX host does not give a plugin a tempo, so those
-  two modes are not offered.
+- **Beat and Bar sync.** An OpenFX host doesn't give a plugin a tempo, so those
+  two modes aren't offered.
 
 **Resolve's Fusion page reports the frame rate on the effect but not on its
 clips; the plugin reads the effect's, and assumes 24 fps only where a host
 reports none.** So in Fusion, as on the Edit and Color pages, Clip time and the
 border's stripes follow the timeline's own rate.
 
-It renders on the CPU rather than the GPU — about 5 ms a frame at 1920×1080 on a
-16-thread Apple M4 Max, about 35 ms on a single thread — and the picture matches
+It renders on the CPU rather than the GPU (about 5 ms a frame at 1920×1080 on a
+16-thread Apple M4 Max, about 35 ms on a single thread), and the picture matches
 the Resolume build's except for the odd pixel sitting exactly on the edge
 between two Spectrum pixels or two border stripes, or exactly on its cell's
 brightness threshold, which can take the neighbouring colour: typically a few
@@ -386,15 +395,15 @@ hundred pixels in a 1920×1080 frame.
 
 ## If it looks like it is doing nothing
 
-- **Mix** at zero is the clip, untouched — exactly.
+- **Mix** at zero is the clip, exactly as it came in.
 - **Progress** inside the pilot tone shows only the Background and the border.
   Push it past **Pilot Length**.
 - **Background** on **Clip** with Progress near 0 looks like the clip plus a
   border, because almost nothing has arrived yet.
 - **Message On** does nothing until **Error Rate** is up and a block fails.
 
-A shader that will not compile presents exactly as a plugin that does nothing,
-with the real message in the log:
+A shader that won't compile looks just like a plugin that does nothing, with the
+actual message in the log:
 
 ```
 macOS    ~/Library/Logs/pilot/pilot.YYYY-MM-DD.log
@@ -406,7 +415,7 @@ Windows  %LOCALAPPDATA%\pilot\logs\pilot.YYYY-MM-DD.log
 ## About
 
 The **About** group at the bottom shows the plugin's name and version, with a
-row of buttons that open its links — the project page, the source and so on — in
+row of buttons that open its links (the project page, the source and so on) in
 your browser.
 
 ## Reporting something

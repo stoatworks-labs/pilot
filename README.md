@@ -3,33 +3,32 @@
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. **It has never been loaded
 > into Resolume on macOS** (see [Status](#status) for Windows), and **the OpenFX
-> build has been in one real OpenFX host only** — DaVinci Resolve Studio 21.1 on
+> build has only been in one real OpenFX host**, DaVinci Resolve Studio 21.1 on
 > macOS, as a Fusion tool and as an Edit-page transition (see
 > [OpenFX](#openfx--resolve-vegas-nuke-natron)). Everything else below is
-> measured offline, through the real plugin class in a headless GL context: the
-> address order exists twice — as the bit
-> layout and as a plain nested loop — and `pttest --agree` proves the two agree for
-> all 6144 addresses bitwise; `pttest --reveal` renders through the shipping shader
-> and checks all 49,152 pixels against the independently written table, at two
-> different output sizes, at six points in the load; and `pttest --error` measures
-> the failure rate against 1/r over 20,000 seeded draws. `pttest --negative`
-> deliberately breaks the model and asserts every one of those checks notices. A
-> control sweep fails if any parameter turns out to do nothing (see
-> [Building and testing](#building-and-testing)).
+> measured offline, through the real plugin class in a headless GL context. The
+> address order is written twice, as the bit layout and as a plain nested loop, and
+> the two agree for all 6144 addresses bitwise; the shipping shader's output is
+> checked against the independently written table for all 49,152 pixels, at two
+> output sizes and six points in the load; and the failure rate is measured against
+> 1/r over 20,000 seeded draws. A negative run breaks the model on purpose and
+> checks that every one of those checks notices, and a control sweep fails if any
+> parameter turns out to do nothing (see [Building and testing](#building-and-testing)).
 
-A tape loader for Resolume Arena/Avenue, as an FFGL effect — and for DaVinci
-Resolve, Vegas, Nuke and Natron as an OpenFX effect **and transition**. The clip
-arrives the way a ZX Spectrum loaded it: **in screen-memory order, at the baud
-rate, with the border painted by the loading signal itself.**
+A tape loader for Resolume Arena and Avenue, as an FFGL effect, and for DaVinci
+Resolve, Vegas, Nuke and Natron as an OpenFX effect **and transition**. Your clip
+arrives the way a ZX Spectrum loading screen did: **in screen-memory order, at the
+baud rate, with the border painted by the loading signal itself.** There's even an
+Error Rate, for the full experience of a load falling over halfway through.
 
-Most reveal transitions are a shape moving across a frame — a wipe, a circle, a
-slab of noise. This one is not a shape at all. It is an **address order**: the
-Spectrum's display file is not linear, so filling it from the start of the tape to
-the end produces the pattern it produces, and nobody chose it.
+Most reveal transitions are a shape moving across a frame: a wipe, a circle, a
+slab of noise. This one isn't a shape at all. It's an **address order**. The
+Spectrum's display file isn't linear, so filling it from the start of the tape to
+the end makes the pattern it makes, and nobody chose it.
 
 ![A ZX Spectrum tape load in progress: two thirds of a monochrome picture on screen, the last third arriving in an eight-line interleave, framed by yellow and blue border stripes](docs/thumb.png)
 
-<sub>Rendered by the plugin's own offline harness (<code>pttest</code>), not captured from Resolume.</sub>
+<sub>Rendered by the plugin's own offline harness (<code>pttest</code>) rather than captured from Resolume.</sub>
 
 <!-- downloads:start -->
 
@@ -80,60 +79,60 @@ For a pixel at (px, py), the byte holding it lives at
 
     third*2048 + line*256 + charrow*32 + xbyte
 
-— which third of the screen, then which line within a character cell, then which
-character row within that third. Take the rows apart in that order and put them
-back in that order, and three things follow without being designed:
+That's which third of the screen, then which line within a character cell, then
+which character row within that third. Take the rows apart in that order and put
+them back in that order, and three things follow without anyone designing them:
 
-- **The picture does not wipe down the screen.** It arrives in three thirds, each
+- **The picture doesn't wipe down the screen.** It arrives in three thirds, each
   filling in an eight-line interleave, which is the venetian-blind pattern
   everybody who watched a Spectrum load remembers.
 - **Colour arrives last, all at once.** The 768-byte attribute file sits *after*
   the 6144-byte bitmap, so the image lands in monochrome and colours in over the
-  final 11% of the load. Nothing schedules that; it is where the bytes are.
-- **The border stripe period is the byte rate.** The border is not decoration —
-  it is the loading signal. The ULA is told the current half-cycle's state and the
+  final 11% of the load. Nothing schedules that; it's just where the bytes are.
+- **The border stripe period is the byte rate.** The border is the loading signal
+  itself. The ULA is told the current half-cycle's state and the
   beam paints it as it scans, so the stripes are horizontal and there are
   `baud / 50` pairs of them down the picture.
 
-It is a transition in practice, and the fleet has none.
+In practice it's a transition, and the fleet doesn't have any others.
 
 [![Pilot — your clip loads like a ZX Spectrum tape, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=c9zzg9t-Epc)
 
-*[Watch it](https://www.youtube.com/watch?v=c9zzg9t-Epc) — 56 seconds: the
+*[Watch it](https://www.youtube.com/watch?v=c9zzg9t-Epc) (56 seconds): the
 pilot tone in the border, the picture arriving in screen-memory order, colour
 last, attribute clash, a failed block and the load starting over, the four
 machines' borders, the Baud control, and the whole thing as a transition.
-Every frame is the real plugin's output: an FFGL plugin has no window, so the
-footage is rendered by this repository's own offline harness (`pttest --pipe`,
-driven by a cue sheet) rather than filmed off a screen, and the clips are
-Resolume's bundled demo media.*
+It's all the plugin's own output. An FFGL plugin doesn't have a window to film,
+so the footage comes from this repo's offline harness (`pttest --pipe`, driven
+by a cue sheet) rather than a screen recording, and the clips are Resolume's
+bundled demo media.*
 
 ## Controls
 
-- **Machine** — Type (ZX 48 / ZX 128 / C64 turbo / Amstrad), Baud, and the
+- **Machine**: Type (ZX 48 / ZX 128 / C64 turbo / Amstrad), Baud, and the
   power-on attribute the picture wears before its own colours arrive: Ink, Paper,
   Bright. A Spectrum powers up black on white, and so does this.
-- **Load** — Progress, Sync (Manual / Clip time / Beat / Bar), Error Rate, Message
+- **Load**: Progress, Sync (Manual / Clip time / Beat / Bar), Error Rate, Message
   On. At Clip time the tape really does run at the baud rate: 6912 bytes at 1500
   baud is 37 seconds. Error Rate fails blocks at random, and a failed block prints
   `R Tape loading error, 0:1` in the Spectrum's own words before the load restarts.
-- **Border** — Border On, Border Width, Pilot Length. Border Off is not a colour,
-  it is the absence of a border: the screen fills the composition. Pilot Length is
+- **Border**: Border On, Border Width, Pilot Length. Border Off isn't a colour;
+  it's no border at all, and the screen fills the composition. Pilot Length is
   how much of the Progress range is spent on the pilot tone before the first byte
-  lands — red and cyan on a Spectrum, then yellow and blue once data starts.
-- **Output** — Mix, and Background: what an address that has not arrived yet
+  lands: red and cyan on a Spectrum, then yellow and blue once data starts.
+- **Output**: Mix, and Background: what an address that hasn't arrived yet
   shows. Paper is what a real machine shows; Clip turns the whole thing into a
   colour-and-quantise transition over the live picture.
 
 ## OpenFX — Resolve, Vegas, Nuke, Natron
 
 The same effect also builds as an OpenFX plugin, for DaVinci Resolve (Edit and
-Color pages, and Fusion), Vegas Pro, Nuke and Natron — and there it is two
+Color pages, and Fusion), Vegas Pro, Nuke and Natron, and there it's two
 things: an **effect**, as in Resolume, and a **transition**, which is what Pilot
-is in practice and what an FFGL effect cannot be. It renders on the CPU.
-Everything that is not per-pixel is the Resolume build's own code — the address
+is in practice and what an FFGL effect can't be. It renders on the CPU.
+Everything that isn't per-pixel is the Resolume build's own code (the address
 order, the tape and its failures, the machines, the controls and every value the
-shaders are handed — and the three shaders are copied into C++ statement for
+shaders are handed), and the three shaders are copied into C++ statement for
 statement (`source/Render.cpp`, marked `//= mirrored:` in both places).
 
 It ships from **v0.2.0** as its own downloads, separate from the Resolume ones:
@@ -148,16 +147,16 @@ Windows  C:\Program Files\Common Files\OFX\Plugins\
 Linux    /usr/OFX/Plugins/
 ```
 
-It appears as **Pilot**, under **Stoatworks**, with the same four groups.
+It shows up as **Pilot**, under **Stoatworks**, with the same four groups.
 
 **As an effect**, keyframe Progress, or set Sync to Clip time and the tape runs at
 the baud rate. **As a transition**, the transition's own position drives the
 tape: the incoming shot (SourceTo) is what loads, and the outgoing one
-(SourceFrom) shows through every address that has not arrived yet — Background
-defaults to **Clip** there, because under Paper the outgoing shot would never
-appear — and is what Mix fades against.
+(SourceFrom) shows through every address that hasn't arrived yet and is what Mix
+fades against. Background defaults to **Clip** there, because under Paper the
+outgoing shot would never appear.
 
-The transition has an **Ends** group of its own (the filter does not):
+The transition has an **Ends** group of its own (the filter doesn't):
 
 - **Fade** (the default) starts on exactly the outgoing clip and finishes on
   exactly the incoming one. Over the first **End Length** (0.15 of the
@@ -172,7 +171,7 @@ The transition has an **Ends** group of its own (the filter does not):
   "Exactly" is at Transition 0 and 1, and a host that never asks for those
   values never gets them. **DaVinci Resolve asks for the middle of each frame**,
   (n + 0.5) / N, so there the first frame is already a little into the opening
-  fade and the last is not quite the incoming clip, and the edit then cuts to
+  fade and the last isn't quite the incoming clip, and the edit then cuts to
   the clean clip. In a 24-frame transition at the default End Length both end
   frames are about 5% into their fade: the first shows a faint border over the
   outgoing clip, the last is about 95% the incoming clip. A longer transition
@@ -182,39 +181,39 @@ The transition has an **Ends** group of its own (the filter does not):
   the first frame already has the border, and the last is the Spectrum screen,
   after which the edit cuts to the real picture.
 
-What is different from the Resolume build, and why:
+What's different from the Resolume build, and why:
 
 - **No Beat or Bar sync.** An OpenFX host gives a plugin no tempo and no bar
   position, so those two Sync modes are absent rather than present and dead (the
   plugin description says so). Manual and Clip time are there, at the same
-  positions in the menu. Clip time runs on the host's timeline — the OFX time, in
-  frames, over the output frame rate — so any frame renders the same however the
+  positions in the menu. Clip time runs on the host's timeline (the OFX time, in
+  frames, over the output frame rate), so any frame renders the same however the
   host reaches it, out of order or alone. **Resolve's Fusion page reports the
   frame rate on the effect but not on its clips; the plugin reads the effect's,
-  and assumes 24 fps only where a host reports none** — so in Fusion, Clip
+  and assumes 24 fps only where a host reports none**, so in Fusion, Clip
   time's period and the border's stripes follow the timeline's rate.
-- **The transition is new**, and so are its Ends. In it, Progress and Sync are
-  not shown (the host owns the position), and Background defaults to Clip, as
+- **The transition is new**, and so are its Ends. In it, Progress and Sync
+  aren't shown (the host owns the position), and Background defaults to Clip, as
   above.
 - **CPU, not GPU.** 4.6–5.9 ms a frame at 1920×1080 on an M4 Max's 16 threads,
   35 ms on one; the Resolume build is 0.2 ms on its GPU. 8-bit, 16-bit and float
   images, RGBA or RGB, premultiplied or not. In a float host the clip that
-  Background = Clip and Mix show is not clamped to 0..1; the Spectrum side is
+  Background = Clip and Mix show isn't clamped to 0..1; the Spectrum side is
   quantised to eight bits first, as the GPU's own raster buffer does.
 - **Not bit-identical to the GPU, and every difference accounted for.** The
-  picture is fifteen colours, so a disagreement is never a small error: it is a
+  picture is fifteen colours, so a disagreement is never a small error: it's a
   whole neighbouring colour. On the harness's test card at 1920×1080, between 0
   and 325 of the 2,073,600 pixels (at most 0.016%) differ by more than one level
   in eleven configurations, and 9,081 (0.44%) in a twelfth built to put
   border-stripe edges exactly on pixel centres; at Mix 0.5 another 8.5% differ
   by exactly one level, the eight-bit rounding of a half-way mix. `pttest --cpu`
-  traces every pixel that differs by more to one of two causes — a decision
+  traces every pixel that differs by more to one of two causes: a decision
   sitting exactly on its edge, where the GPU's own rounding falls the other way
   (a pixel centre on the line between two Spectrum pixels or two stripes, a luma
   on its cell's threshold, a mean colour of exactly half a level), or a raster
-  byte the GPU's texture filter left one level from the CPU's — and fails on any
-  it cannot. It holds on the M4 Max's GPU and on Apple's software renderer, which
-  CI runs it on.
+  byte the GPU's texture filter left one level from the CPU's. It fails on any
+  it can't trace. It holds on the M4 Max's GPU and on Apple's software renderer,
+  which CI runs it on.
 
 **Verified:** the bundle loads in an OpenFX test host (an extended `ofxprobe`),
 lists the Filter, General and Transition contexts, and renders as a filter and
@@ -227,8 +226,8 @@ byte, rendered and as an identity, in 8-bit and float; on the ramps the frame is
 within one level of ( 1 − s ) plain + s · Cut at the remapped progress; and
 between them it is that Cut, byte for byte. In the test host's Fusion mode,
 which is stricter than Resolve's Fusion page and reports no frame rate anywhere,
-not even on the effect, it renders — the build before the guard did not —
-exactly as a 24 fps host gets it. The Windows and Linux builds are compiled by
+not even on the effect, it renders (the build before the guard didn't) exactly
+as a 24 fps host gets it. The Windows and Linux builds are compiled by
 CI and the Linux one is load-tested on Rocky 8.
 
 **In a real host:** DaVinci Resolve Studio 21.1 on macOS, 2026-10-04, with the
@@ -236,43 +235,52 @@ macOS build. As a Fusion tool (MediaIn → Pilot → MediaOut, rendered to PNG a
 1920×1080), six frames are byte-identical to the test host's render of the same
 frames at 24 fps; the plugin reads the effect's rate there, as Fusion reports
 none on its clips. (An earlier build failed there because it read a clip's rate
-unguarded; that is what the guard fixed.) As a transition on the Edit page (24
+unguarded; that's what the guard fixed.) As a transition on the Edit page (24
 frames on a 24 fps timeline, default settings) it plays in the right order: the
 outgoing clip with the border fading in, the load, then the fade into the
 incoming clip. Fitted to the frames, the fade's weights at each end are 0.05,
-0.38 and 0.78 — what the formula gives for Transition = (n + 0.5) / 24 — so its
-first and last frames are close to the clips but not exactly them (see Ends,
-above).
+0.38 and 0.78, which is what the formula gives for Transition = (n + 0.5) / 24,
+so its first and last frames are close to the clips but not exactly them (see
+Ends, above).
 
-**Not verified:** it has never been in Vegas, Nuke or Natron; in Resolve it has
-not been tried as an effect on the Edit or Color page, and how its controls
-present there is not recorded; the Windows and Linux builds have never rendered
+**Not verified:** it has never been in Vegas, Nuke or Natron; in Resolve it
+hasn't been tried as an effect on the Edit or Color page, and how its controls
+look there isn't recorded; the Windows and Linux builds have never rendered
 a frame in any host; and 16-bit images have never been fed to it.
 
 ## Status
 
-**v0.2.0, which adds the OpenFX build, and still honestly early.** (v0.1.0, the
+**v0.2.0, which adds the OpenFX build, and still early days.** (v0.1.0, the
 Resolume build alone, was built 2026-09-22 and released 2026-09-23.)
 
 User guide: [docs/USER-GUIDE.md](docs/USER-GUIDE.md), also at
 https://stoatworks-labs.com/software/pilot/guide/
 
-It has never been loaded into Resolume on macOS. On Windows it has: a CI build of the v0.1.0 source went through the fleet's Arena gate on 2026-09-23 (Resolume Arena 7.27.1 on win-lab, Mesa llvmpipe, no GPU) and passed 9 of 9 checks. It loads from Extra Effects, registers as `SW Pilot` / `PT01` / effect, all 20 host parameters (Arena's Opacity plus these 19) match the declaration in name, order, type, range and default, it renders, and Arena's log stays clean. 12 of the 15 controls the gate probes measurably moved the picture and 3 (Type, Baud, Message On) were inconclusive: the border stripes move every frame, so the picture's own noise floor (about 40 levels) hides smaller changes. None read as dead. It says nothing about speed or a real GPU.
+It has never been loaded into Resolume on macOS. On Windows it has been: a CI
+build of the v0.1.0 source went through the fleet's Arena gate on 2026-09-23
+(Resolume Arena 7.27.1 on win-lab, Mesa llvmpipe, no GPU) and passed 9 of 9
+checks. It loads from Extra Effects, registers as `SW Pilot` / `PT01` / effect,
+all 20 host parameters (Arena's Opacity plus these 19) match the declaration in
+name, order, type, range and default, it renders, and Arena's log stays clean.
+12 of the 15 controls the gate probes measurably moved the picture and 3 (Type,
+Baud, Message On) were inconclusive: the border stripes move every frame, so the
+picture's own noise floor (about 40 levels) hides smaller changes. None read as
+dead. It says nothing about speed or a real GPU.
 
 Everything here is verified through the offline harness, which drives the real
-plugin class headlessly — so how the parameters *present* (whether four groups
+plugin class headlessly. So how the parameters *look* (whether four groups
 read sensibly in the inspector, whether the Ink and Paper dropdowns show as
 colours, whether Arena's premultiplied textures behave) is untested on macOS, and
-that is exactly what the harness cannot tell you.
+that's precisely the thing the harness can't tell you.
 
-What is measured, on one M4 Max: the address order agrees with its independent
+What's measured, on one M4 Max: the address order agrees with its independent
 derivation for all 6144 addresses, bitwise; the rendered frame matches the order
 table for all 49,152 pixels at 1920×1080 **and** at 640×480, at six points in the
 load, with zero disagreements; no attribute byte can be revealed before 6144; the
 border advances by exactly 16 half-cycles per byte on every machine; the failure
 rate matches 1/r within four standard errors over 20,000 draws at five rates; and
 all 14 controls move the picture. Render cost is 0.09 ms/frame at 720p, 0.21 at
-1080p and 0.36 at 4K — about 2% of a 60 fps frame at 4K, because the two
+1080p and 0.36 at 4K, about 2% of a 60 fps frame at 4K, because the two
 expensive passes run at 256×192 and 32×24 whatever the composition is (macOS
 figures only).
 
@@ -282,17 +290,17 @@ checks (`--reveal`, `--pixels`) and the control sweep at 320×180 all passed on
 that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
-Not done, and not pretended otherwise: no factory presets, the universal build has
+Not done yet: no factory presets, the universal build has
 never run on an Intel Mac, and the OpenFX build has been in one real OpenFX host
 only, DaVinci Resolve 21.1 on macOS, with its Windows and Linux builds in none
 (see [above](#openfx--resolve-vegas-nuke-natron)). The
 [browser demo](https://pilot-demo.stoatworks-labs.com) runs the plugin's own raster,
 attribute and compose shaders ported to WebGL2, and `demo/tools/check_shaders.py` holds
-that GLSL character-for-character against `source/shaders/` — but the tape model beside
+that GLSL character-for-character against `source/shaders/`, but the tape model beside
 it (`Loader.cpp`, the machine table, the controls) is a hand port to JavaScript, and
 nothing checks that.
 The `Baud` control drives the border's stripe rate and the Clip time period but
-**not** the reveal rate in Manual mode, which is deliberate and explained in
+**not** the reveal rate in Manual mode, which is on purpose and explained in
 AGENTS.md.
 
 ## Building and testing
@@ -308,16 +316,16 @@ universal (arm64 + x86_64); Windows needs GLEW via vcpkg.
 Add `-DCMAKE_OSX_ARCHITECTURES=arm64` for a much faster dev build.
 
 `cmake --build build` also produces `build/Pilot.ofx.bundle`, the OpenFX plugin;
-copy it into `/Library/OFX/Plugins` by hand (`cmake --install` does not touch a
+copy it into `/Library/OFX/Plugins` by hand (`cmake --install` doesn't touch a
 root-owned folder). `-DBUILD_OFX=OFF` leaves it out; `-DPILOT_BUILD_FFGL=OFF`
-builds it alone, with no submodule, no GLEW and no GL — which is how the Linux
+builds it alone, with no submodule, no GLEW and no GL, which is how the Linux
 build is made.
 
 The harness renders the real plugin class headlessly. Ten of its twelve check
-groups open **no GL context at all** — they run against the model in
-`source/Spectrum.cpp` and `source/Loader.cpp`, so they cannot be a property of a
-rasteriser or of a raster — and the two that do rasterise each run at two output
-sizes on purpose:
+groups don't open a GL context at all. They run against the model in
+`source/Spectrum.cpp` and `source/Loader.cpp`, so what they check can't be a
+property of a rasteriser or of a raster, and the two that do rasterise each run
+at two output sizes on purpose:
 
     ./build/pttest --out /tmp/f.png              # the test card, mid-load
     ./build/pttest --agree                       # the two address derivations, bitwise
