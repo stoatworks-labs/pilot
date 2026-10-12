@@ -65,7 +65,7 @@ tools/verify.sh           all of it, from a fresh universal build.
 **Almost nothing is decided in the shader that could be decided on the CPU.** The
 byte count, the border phase and the error state all arrive as uniforms, worked
 out once per frame by `frame::Prepare` (`Frame.cpp`) from the tape in
-`Loader.cpp`. That is not an optimisation — it is what lets ten of the twelve check
+`Loader.cpp`. That is not an optimisation — it is what lets ten of the fourteen check
 groups run with no GL context at all, so the claims about the address order, the
 border period and the error rate cannot be a property of a rasteriser or of a
 raster. What the shader owns is the thing only the shader can own: the address

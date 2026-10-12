@@ -94,7 +94,7 @@ them back in that order, and three things follow without anyone designing them:
   beam paints it as it scans, so the stripes are horizontal and there are
   `baud / 50` pairs of them down the picture.
 
-In practice it's a transition, and the fleet doesn't have any others.
+In practice it's a transition, and it was the fleet's first.
 
 [![Pilot — your clip loads like a ZX Spectrum tape, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=c9zzg9t-Epc)
 
@@ -285,9 +285,9 @@ expensive passes run at 256×192 and 32×24 whatever the composition is (macOS
 figures only).
 
 CI (`ci.yml`) has run on GitHub's macOS runner, which has no GPU, so the harness
-fell back to Apple's software renderer: the ten model checks, the two rasterising
-checks (`--reveal`, `--pixels`) and the control sweep at 320×180 all passed on
-that second rasteriser. The Windows x64 DLL is compiled with MSVC by
+fell back to Apple's software renderer: the ten model checks, the four rasterising
+checks (`--reveal`, `--pixels`, `--cpu`, `--transition`) and the control sweep at
+320×180 all passed on that second rasteriser. The Windows x64 DLL is compiled with MSVC by
 `release.yml` on GitHub.
 
 Not done yet: no factory presets, the universal build has
@@ -321,11 +321,11 @@ root-owned folder). `-DBUILD_OFX=OFF` leaves it out; `-DPILOT_BUILD_FFGL=OFF`
 builds it alone, with no submodule, no GLEW and no GL, which is how the Linux
 build is made.
 
-The harness renders the real plugin class headlessly. Ten of its twelve check
+The harness renders the real plugin class headlessly. Ten of its fourteen check
 groups don't open a GL context at all. They run against the model in
 `source/Spectrum.cpp` and `source/Loader.cpp`, so what they check can't be a
-property of a rasteriser or of a raster, and the two that do rasterise each run
-at two output sizes on purpose:
+property of a rasteriser or of a raster, and the four that do rasterise each run
+at two output sizes or more, on purpose:
 
     ./build/pttest --out /tmp/f.png              # the test card, mid-load
     ./build/pttest --agree                       # the two address derivations, bitwise
