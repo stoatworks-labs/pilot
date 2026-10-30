@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macos-universal, os: macos-14,       artifact: Pilot.bundle }
+          - { name: macos-universal, os: macos-15,       artifact: Pilot.bundle }
           - { name: windows-x86_64,  os: windows-latest, artifact: Pilot.dll }
     steps:
       - uses: actions/checkout@v7
