@@ -7,7 +7,7 @@ namespace pilot
 /**
     An off-screen buffer for one stage of the chain.
 
-    Two things on top of the SDK's FFGLFBO.
+    Three things on top of the SDK's FFGLFBO.
 
     **It reallocates only when it has to.** The chain is sized by the
     television system, not by the composition, so the signal buffers keep their
@@ -22,6 +22,12 @@ namespace pilot
     every buffer whenever the system or the composition size changes, and
     somebody auditioning NTSC against PAL a few times should not be paying
     megabytes of texture memory for each comparison.
+
+    **It has no depth buffer.** `FFGLFBO::Initialise()` always attaches a
+    24-bit depth renderbuffer the size of the picture, and nothing here draws
+    with depth: at 4K that is about 32 MB a buffer for nothing. Ensure()
+    allocates through InitialiseColourOnly() instead, the same steps with the
+    colour texture alone.
 */
 class PassBuffer : public ffglex::FFGLFBO
 {
@@ -40,6 +46,12 @@ public:
 	{
 		return GetGLID() != 0;
 	}
+
+private:
+	/// FFGLFBO::Initialise() less the depth renderbuffer: the framebuffer, the
+	/// colour texture and its attachment, and everything released again if
+	/// the framebuffer is not complete.
+	bool InitialiseColourOnly( GLsizei requestedWidth, GLsizei requestedHeight, GLint format );
 };
 
 } // namespace pilot
